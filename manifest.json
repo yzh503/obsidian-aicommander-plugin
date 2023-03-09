@@ -1,11 +1,11 @@
 {
-	"id": "obsidian-sample-plugin",
-	"name": "Sample Plugin",
+	"id": "obsidian-prompt-ai",
+	"name": "Prompt AI",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "This is a sample plugin for Obsidian. This plugin demonstrates some of the capabilities of the Obsidian API.",
-	"author": "Obsidian",
-	"authorUrl": "https://obsidian.md",
-	"fundingUrl": "https://obsidian.md/pricing",
+	"description": "Use OpenAI APIs to generate text from prompt, notes, and audio files.",
+	"author": "Simon Yang",
+	"authorUrl": "https://yzh503.github.io",
+	"fundingUrl": "https://yzh503.github.io",
 	"isDesktopOnly": false
 }
