@@ -1,16 +1,11 @@
-import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, FileSystemAdapter} from 'obsidian';
+import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting} from 'obsidian';
 import { PromptModal } from "./modal";
-import { Configuration, OpenAIApi, CreateImageRequestSizeEnum, ChatCompletionRequestMessageRoleEnum } from "openai";
-import {CognitiveServicesCredentials} from 'ms-rest-azure';
-import {WebSearchAPIClient} from 'azure-cognitiveservices-websearch'
-import * as fs from 'fs';
+import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from "openai";
 import axios from 'axios';
-import FormData from 'form-data';
 
 interface MyPluginSettings {
 	model: string;
     apiKey: string;
-    role: string;
     imgSize: string;
     useSearchEngine: boolean;
     searchEngine: string;
@@ -20,7 +15,6 @@ interface MyPluginSettings {
 const DEFAULT_SETTINGS: MyPluginSettings = {
 	model: 'gpt-3.5-turbo',
     apiKey: '',
-    role: 'user',
     imgSize: '256x256',
     useSearchEngine: false,
     searchEngine: 'bing',
@@ -30,29 +24,12 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
 export default class MyPlugin extends Plugin {
 	settings: MyPluginSettings;
 
-    async searchText(prompt: string) {
-        const credentials = new CognitiveServicesCredentials(this.settings.bingSearchKey);
-        const webSearchApiClient = new WebSearchAPIClient(credentials);
-        webSearchApiClient.web.search('seahawks').then((result) => {
-            const properties = ["webPages", "news"];
-            for (let i = 0; i < properties.length; i++) {
-                if (result[properties[i]]) {
-                    console.log(result[properties[i]].value);
-                } else {
-                    console.log(`No ${properties[i]} data`);
-                }
-            }
-        }).catch((err: Error) => {
-            throw err;
-        })
-    } 
-
     async generateText(prompt: string) {
 
-        if (prompt.length > 4096) return({
+        if (prompt.length < 1 || prompt.length > 4096) return({
             success: false, 
             prompt: prompt, 
-            text: 'Prompt needs to be shorter than 4096 characters.'
+            text: 'Prompt needs to be longer than 1 and shorter than 4096 characters.'
         })
 
         const configuration = new Configuration({
@@ -60,13 +37,39 @@ export default class MyPlugin extends Plugin {
         });
         const openai = new OpenAIApi(configuration);
 
-        const completion = await openai.createChatCompletion({
-            model: this.settings.model,
-            messages: [{
-                role: this.settings.role as ChatCompletionRequestMessageRoleEnum, 
-                content: prompt
-            }],
-        });
+        let completion;
+
+        if (this.settings.useSearchEngine) {
+            console.log('searchResult');
+
+            const searchResult = await this.searchText(prompt);
+            console.log(searchResult);
+            completion = await openai.createChatCompletion({
+                model: this.settings.model,
+                messages: [{
+                    role: 'system',
+                    content: 'You are an assistant who can combine web search results when answering questions. You will receive some search results from a web search API. Add the information from the results to your answer, and mention the source.'
+                },
+                {
+                    role: 'assistant',
+                    content: JSON.stringify(searchResult)
+                },
+                {
+                    role: 'user', 
+                    content: prompt
+                }],
+            });
+        } else {
+            completion = await openai.createChatCompletion({
+                model: this.settings.model,
+                messages: [{
+                    role: 'user', 
+                    content: prompt
+                }],
+            });
+        }
+
+       console.log(completion.data);
 
         const res = completion.data.choices[0].message
         let message;
@@ -166,6 +169,29 @@ export default class MyPlugin extends Plugin {
         return filename;
     }
 
+    async searchText(prompt: string) {
+        const endpoint = 'https://api.bing.microsoft.com/v7.0/search';
+        const subscriptionKey = this.settings.bingSearchKey;
+
+        let values;
+        await axios.get(endpoint, {
+            headers: {
+                'Ocp-Apim-Subscription-Key': subscriptionKey
+            },
+            params: {
+                q: prompt,
+            }
+        })
+        .then(response => {
+            values = response.data.webPages.value;
+        })
+        .catch(error => {
+            console.log(error);
+        });
+
+        return values;
+    } 
+
 	async onload() {
 		await this.loadSettings();
 
@@ -198,7 +224,7 @@ export default class MyPlugin extends Plugin {
                 this.generateText(editor.getLine(position.line)).then((value) => {
                     if (value.success) {
                         new Notice('Text Generated.');
-                        editor.setLine(position.line, `${value.prompt}${value.text}`);
+                        editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
                     } else {
                         new Notice(value.text);
                     }
@@ -251,7 +277,7 @@ export default class MyPlugin extends Plugin {
                 const line = editor.getLine(position.line)
                 const path = this.findAudioFilePath(editor);
                 const fileType = path.split('.').pop();
-                
+
                 if (fileType === undefined) {
                     new Notice('No audio file found');
                     return;
@@ -326,19 +352,6 @@ class ApiSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.model)
 				.onChange(async (value) => {
 					this.plugin.settings.model = value;
-					await this.plugin.saveSettings();
-				}));
-
-        new Setting(containerEl)
-            .setName('Role')
-            .setDesc('Role of the gpt-3.5-turbo model')
-            .addDropdown(dropdown => dropdown
-                .addOption('user', 'user')
-                .addOption('assistant', 'assistant')
-                .addOption('system', 'system')
-                .setValue(this.plugin.settings.role)
-				.onChange(async (value) => {
-					this.plugin.settings.role = value;
 					await this.plugin.saveSettings();
 				}));
         
