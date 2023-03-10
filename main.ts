@@ -1,6 +1,6 @@
 import { App, Editor, MarkdownView, Notice, Plugin, PluginSettingTab, Setting} from 'obsidian';
 import { PromptModal } from "./modal";
-import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from "openai";
+import { Configuration, OpenAIApi, CreateImageRequestSizeEnum, ChatCompletionRequestMessage } from "openai";
 import axios from 'axios';
 
 interface AICommanderPluginSettings {
@@ -26,75 +26,54 @@ export default class AICommanderPlugin extends Plugin {
 
     async generateText(prompt: string) {
 
-        if (prompt.length < 1 || prompt.length > 4096) return({
-            success: false, 
-            prompt: prompt, 
-            text: 'Prompt needs to be longer than 1 and shorter than 4096 characters.'
-        })
+        if (prompt.length < 1 || prompt.length > 4096) throw new Error('Prompt needs to be between 1 and 4096 characters.');
 
-        if (this.settings.apiKey.length <= 1) return({
-            success: false, 
-            prompt: prompt, 
-            text: 'OpenAI API Key is not provided.'
-        })
+        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
-        const configuration = new Configuration({
-            apiKey: this.settings.apiKey,
-        });
+        const configuration = new Configuration({ apiKey: this.settings.apiKey });
         const openai = new OpenAIApi(configuration);
 
-        let completion;
 
-        try {
-            if (this.settings.useSearchEngine) {
+        let messagesToSend: ChatCompletionRequestMessage[];
 
-                if (this.settings.bingSearchKey.length <= 1) return({
-                    success: false, 
-                    prompt: prompt, 
-                    text: 'Bing Web Search API Key is not provided.'
-                })
-    
-                const searchResult = await this.searchText(prompt);
-                completion = await openai.createChatCompletion({
-                    model: this.settings.model,
-                    messages: [{
-                        role: 'system',
-                        content: 'As an assistant who can absorb web search results, your task is to incorporate information from a web search API into your answers when responding to questions. Your response should include the relevant information from the search results and provide attribution by mentioning the source of information with the url. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the search results.'
-                    },
-                    {
-                        role: 'assistant',
-                        content: JSON.stringify(searchResult)
-                    },
-                    {
-                        role: 'user', 
-                        content: prompt
-                    }],
-                });
-            } else {
-                completion = await openai.createChatCompletion({
-                    model: this.settings.model,
-                    messages: [{
-                        role: 'user', 
-                        content: prompt
-                    }],
-                });
-            }
-        } catch (error) {
-            return({
-                success: false, 
-                prompt: prompt, 
-                text: error
-            });
+        if (this.settings.useSearchEngine) {
+            if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
+
+            const searchResult = await this.searchText(prompt)
+
+            console.log("Search Result: ", searchResult);
+
+            messagesToSend = [{
+                role: 'system',
+                content: 'As an assistant who can absorb web search results, your task is to incorporate information from a web search API into your answers when responding to questions. Your response should include the relevant information from the search results and provide attribution by mentioning the source of information with the url. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the search results.'
+            },
+            {
+                role: 'assistant',
+                content: JSON.stringify(searchResult)
+            },
+            {
+                role: 'user', 
+                content: prompt
+            }];
+            
+        } else {
+            messagesToSend = [{
+                role: 'user', 
+                content: prompt
+            }];
         }
 
-        const res = completion.data.choices[0].message
-        let message;
-        if (res == undefined) message = 'No response from Bing.';
-        else message = res.content;
+        const completion = await openai.createChatCompletion({
+            model: this.settings.model,
+            messages: messagesToSend,
+        })
+
+        const message = completion.data.choices[0].message
+        if (message == undefined) throw new Error('No response from OpenAI API');
+        const content = message.content;
 
         return({
-            success: true,
-            text: message,
+            text: content,
             prompt: prompt 
         });
     }
@@ -128,28 +107,18 @@ export default class AICommanderPlugin extends Plugin {
             apiKey: this.settings.apiKey,
         });
         const openai = new OpenAIApi(configuration);
+        
+        const response = await openai.createImage({
+            prompt: prompt,
+            n: 1,
+            size: this.settings.imgSize as CreateImageRequestSizeEnum,
+            response_format: 'b64_json'
+        });
 
-        try {
-            const response = await openai.createImage({
-                prompt: prompt,
-                n: 1,
-                size: this.settings.imgSize as CreateImageRequestSizeEnum,
-                response_format: 'b64_json'
-            });
-
-            return({
-                success: true, 
-                prompt: prompt, 
-                text: `![](data:image/png;base64,${response.data.data[0].b64_json})\n`
-            })
-
-        } catch (error) {
-            return({
-                success: false, 
-                prompt: prompt, 
-                text: error
-            });
-        }
+        return({
+            prompt: prompt, 
+            text: `![](data:image/png;base64,${response.data.data[0].b64_json})\n`
+        })
     }
 
     async generateTranscript(audioBuffer: ArrayBuffer, filetype: string, path: string) {
@@ -163,23 +132,26 @@ export default class AICommanderPlugin extends Plugin {
         formData.append('file', blob, 'audio.' + filetype);
         formData.append('model', 'whisper-1');
 
-        let result;
-
-        await axios.post(baseUrl, formData, {
+        return axios.post(baseUrl, formData, {
             headers: {
                 'Content-Type': 'multipart/form-data',
                 'Authorization': 'Bearer ' + this.settings.apiKey
             }
-        }).then(response => {
-            console.log(response.data);
-            result = response.data.text;
-          })
-          .catch(error => {
-            result = error.response.data.error.message;
-        });
-
-        return result;
+        }).then(response => response.data.text)
     }
+
+    async searchText(prompt: string) {
+        const response = await axios.get('https://api.bing.microsoft.com/v7.0/search', {
+            headers: {
+                'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey
+            },
+            params: {
+                q: prompt,
+            }
+        })
+
+        return response.data.webPages.value;
+    } 
 
     findAudioFilePath(editor: Editor) {
         const position = editor.getCursor();
@@ -195,29 +167,6 @@ export default class AICommanderPlugin extends Plugin {
         return filename;
     }
 
-    async searchText(prompt: string) {
-        const endpoint = 'https://api.bing.microsoft.com/v7.0/search';
-        const subscriptionKey = this.settings.bingSearchKey;
-
-        let values;
-        await axios.get(endpoint, {
-            headers: {
-                'Ocp-Apim-Subscription-Key': subscriptionKey
-            },
-            params: {
-                q: prompt,
-            }
-        })
-        .then(response => {
-            values = response.data.webPages.value;
-        })
-        .catch(error => {
-            console.log(error);
-        });
-
-        return values;
-    } 
-
 	async onload() {
 		await this.loadSettings();
 
@@ -228,14 +177,14 @@ export default class AICommanderPlugin extends Plugin {
 				const onSubmit = (prompt: string) => {
                     const position = editor.getCursor();
                     new Notice("Generating text...");  
-                    this.generateText(prompt).then((value) => {
-                        if (value.success) {
+                    this.generateText(prompt)
+                        .then((value) => {
                             new Notice('Text Generated.');
                             editor.setLine(position.line, `${value.text}`);
-                        } else {
-                            new Notice(value.text);
-                        }
-                    });
+                        })
+                        .catch(error => {
+                            new Notice(error.message);
+                        });
                 };
                 new PromptModal(this.app, "", onSubmit).open();
 			}
@@ -247,14 +196,14 @@ export default class AICommanderPlugin extends Plugin {
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 new Notice("Generating text...");  
-                this.generateText(editor.getLine(position.line)).then((value) => {
-                    if (value.success) {
-                        new Notice('Text Generated.');
-                        editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
-                    } else {
-                        new Notice(value.text);
-                    }
-                });
+                this.generateText(editor.getLine(position.line))
+                    .then((value) => {
+                            new Notice('Text Generated.');
+                            editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
+                    })
+                    .catch(error => {
+                        new Notice(error.message);
+                    });
 			}
 		});
 
@@ -264,18 +213,18 @@ export default class AICommanderPlugin extends Plugin {
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
                 new Notice("Generating text...");  
-                this.generateText(selectedText).then((value) => {
-                    if (value.success) {
-                        new Notice('Text Generated.');
-                        if (editor.getSelection() === value.prompt) {
-                            editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
-                        } else {
-                            editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
-                        }
-                    } else {
-                        new Notice(value.text);
-                    }
-                });
+                this.generateText(selectedText)
+                    .then((value) => {
+                            new Notice('Text Generated.');
+                            if (editor.getSelection() === value.prompt) {
+                                editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
+                            } else {
+                                editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
+                            }
+                    })
+                    .catch(error => {
+                        new Notice(error.message);
+                    });
 			}
 		});
 
@@ -286,14 +235,14 @@ export default class AICommanderPlugin extends Plugin {
 				const onSubmit = (prompt: string) => {
                     const position = editor.getCursor();
                     new Notice("Generating image...");  
-                    this.generateImage(prompt).then((value) => {
-                        if (value.success) {
+                    this.generateImage(prompt)
+                        .then((value) => {
                             new Notice('Image Generated.');
                             editor.setLine(position.line, `\n\n${value.text}`);
-                        } else {
-                            new Notice(value.text);
-                        }
-                    });
+                        })
+                        .catch(error => {
+                            new Notice(error.message);
+                        });
                 };
                 new PromptModal(this.app, "", onSubmit).open();
 			}
@@ -305,14 +254,14 @@ export default class AICommanderPlugin extends Plugin {
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 new Notice("Generating image...");  
-                this.generateImage(editor.getLine(position.line)).then((value) => {
-                    if (value.success) {
-                        new Notice('Image Generated.');
-                        editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
-                    } else {
-                        new Notice(value.text);
-                    }
-                });
+                this.generateImage(editor.getLine(position.line))
+                    .then((value) => {
+                            new Notice('Image Generated.');
+                            editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
+                    })
+                    .catch(error => {
+                        new Notice(error.message);
+                    });
 			}
 		});
 
@@ -322,18 +271,18 @@ export default class AICommanderPlugin extends Plugin {
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
                 new Notice("Generating image...");  
-                this.generateImage(selectedText).then((value) => {
-                    if (value.success) {
-                        new Notice('Image Generated.');
-                        if (editor.getSelection() === value.prompt) {
-                            editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
-                        } else {
-                            editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
-                        }
-                    } else {
-                        new Notice(value.text);
-                    }
-                });
+                this.generateImage(selectedText)
+                    .then((value) => {
+                            new Notice('Image Generated.');
+                            if (editor.getSelection() === value.prompt) {
+                                editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
+                            } else {
+                                editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
+                            }
+                    })
+                    .catch(error => {
+                        new Notice(error.message);
+                    });
 			}
 		});
 
@@ -352,10 +301,14 @@ export default class AICommanderPlugin extends Plugin {
                 }
                 this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
                     new Notice("Generating transcript...");  
-                    this.generateTranscript(audioBuffer, fileType, path).then((result) => {
-                        new Notice('Transcript Generated.');
-                        editor.setLine(position.line, `${line}\n\n${result}`);
-                    });
+                    this.generateTranscript(audioBuffer, fileType, path)
+                        .then((result) => {
+                            new Notice('Transcript Generated.');
+                            editor.setLine(position.line, `${line}${result}`);
+                        })
+                        .catch(error => {
+                            new Notice(error.message);
+                        });
                 });
             
 			}  
