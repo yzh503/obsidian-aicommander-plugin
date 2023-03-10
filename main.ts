@@ -3,7 +3,7 @@ import { PromptModal } from "./modal";
 import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from "openai";
 import axios from 'axios';
 
-interface MyPluginSettings {
+interface AICommanderPluginSettings {
 	model: string;
     apiKey: string;
     imgSize: string;
@@ -12,7 +12,7 @@ interface MyPluginSettings {
     bingSearchKey: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
+const DEFAULT_SETTINGS: AICommanderPluginSettings = {
 	model: 'gpt-3.5-turbo',
     apiKey: '',
     imgSize: '256x256',
@@ -21,8 +21,8 @@ const DEFAULT_SETTINGS: MyPluginSettings = {
     bingSearchKey: ''
 }
 
-export default class MyPlugin extends Plugin {
-	settings: MyPluginSettings;
+export default class AICommanderPlugin extends Plugin {
+	settings: AICommanderPluginSettings;
 
     async generateText(prompt: string) {
 
@@ -32,6 +32,12 @@ export default class MyPlugin extends Plugin {
             text: 'Prompt needs to be longer than 1 and shorter than 4096 characters.'
         })
 
+        if (this.settings.apiKey.length <= 1) return({
+            success: false, 
+            prompt: prompt, 
+            text: 'OpenAI API Key is not provided.'
+        })
+
         const configuration = new Configuration({
             apiKey: this.settings.apiKey,
         });
@@ -39,41 +45,51 @@ export default class MyPlugin extends Plugin {
 
         let completion;
 
-        if (this.settings.useSearchEngine) {
-            console.log('searchResult');
+        try {
+            if (this.settings.useSearchEngine) {
 
-            const searchResult = await this.searchText(prompt);
-            console.log(searchResult);
-            completion = await openai.createChatCompletion({
-                model: this.settings.model,
-                messages: [{
-                    role: 'system',
-                    content: 'You are an assistant who can combine web search results when answering questions. You will receive some search results from a web search API. Add the information from the results to your answer, and mention the source.'
-                },
-                {
-                    role: 'assistant',
-                    content: JSON.stringify(searchResult)
-                },
-                {
-                    role: 'user', 
-                    content: prompt
-                }],
-            });
-        } else {
-            completion = await openai.createChatCompletion({
-                model: this.settings.model,
-                messages: [{
-                    role: 'user', 
-                    content: prompt
-                }],
+                if (this.settings.bingSearchKey.length <= 1) return({
+                    success: false, 
+                    prompt: prompt, 
+                    text: 'Bing Web Search API Key is not provided.'
+                })
+    
+                const searchResult = await this.searchText(prompt);
+                completion = await openai.createChatCompletion({
+                    model: this.settings.model,
+                    messages: [{
+                        role: 'system',
+                        content: 'As an assistant who can absorb web search results, your task is to incorporate information from a web search API into your answers when responding to questions. Your response should include the relevant information from the search results and provide attribution by mentioning the source of information with the url. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the search results.'
+                    },
+                    {
+                        role: 'assistant',
+                        content: JSON.stringify(searchResult)
+                    },
+                    {
+                        role: 'user', 
+                        content: prompt
+                    }],
+                });
+            } else {
+                completion = await openai.createChatCompletion({
+                    model: this.settings.model,
+                    messages: [{
+                        role: 'user', 
+                        content: prompt
+                    }],
+                });
+            }
+        } catch (error) {
+            return({
+                success: false, 
+                prompt: prompt, 
+                text: error
             });
         }
 
-       console.log(completion.data);
-
         const res = completion.data.choices[0].message
         let message;
-        if (res == undefined) message = 'No response from model.';
+        if (res == undefined) message = 'No response from Bing.';
         else message = res.content;
 
         return({
@@ -112,18 +128,28 @@ export default class MyPlugin extends Plugin {
             apiKey: this.settings.apiKey,
         });
         const openai = new OpenAIApi(configuration);
-        const response = await openai.createImage({
-            prompt: prompt,
-            n: 1,
-            size: this.settings.imgSize as CreateImageRequestSizeEnum,
-            response_format: 'b64_json'
-        });
 
-        return({
-            success: true, 
-            prompt: prompt, 
-            text: `\n![](data:image/png;base64,${response.data.data[0].b64_json})\n`
-        })
+        try {
+            const response = await openai.createImage({
+                prompt: prompt,
+                n: 1,
+                size: this.settings.imgSize as CreateImageRequestSizeEnum,
+                response_format: 'b64_json'
+            });
+
+            return({
+                success: true, 
+                prompt: prompt, 
+                text: `![](data:image/png;base64,${response.data.data[0].b64_json})\n`
+            })
+
+        } catch (error) {
+            return({
+                success: false, 
+                prompt: prompt, 
+                text: error
+            });
+        }
     }
 
     async generateTranscript(audioBuffer: ArrayBuffer, filetype: string, path: string) {
@@ -217,7 +243,7 @@ export default class MyPlugin extends Plugin {
 
         this.addCommand({
 			id: 'prompt-text-line',
-			name: 'Generate text from current line',
+			name: 'Generate text from the current line',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 new Notice("Generating text...");  
@@ -233,8 +259,29 @@ export default class MyPlugin extends Plugin {
 		});
 
         this.addCommand({
+			id: 'prompt-text-selected',
+			name: 'Generate text from the selected text',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+                const selectedText = editor.getSelection();
+                new Notice("Generating text...");  
+                this.generateText(selectedText).then((value) => {
+                    if (value.success) {
+                        new Notice('Text Generated.');
+                        if (editor.getSelection() === value.prompt) {
+                            editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
+                        } else {
+                            editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
+                        }
+                    } else {
+                        new Notice(value.text);
+                    }
+                });
+			}
+		});
+
+        this.addCommand({
 			id: 'prompt-img',
-			name: 'Generate image from prompt',
+			name: 'Generate an image from prompt',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				const onSubmit = (prompt: string) => {
                     const position = editor.getCursor();
@@ -242,7 +289,7 @@ export default class MyPlugin extends Plugin {
                     this.generateImage(prompt).then((value) => {
                         if (value.success) {
                             new Notice('Image Generated.');
-                            editor.setLine(position.line, `${value.text}`);
+                            editor.setLine(position.line, `\n\n${value.text}`);
                         } else {
                             new Notice(value.text);
                         }
@@ -254,14 +301,35 @@ export default class MyPlugin extends Plugin {
 
 		this.addCommand({
 			id: 'prompt-img-line',
-			name: 'Generate image from current line',
+			name: 'Generate an image from the current line',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 new Notice("Generating image...");  
                 this.generateImage(editor.getLine(position.line)).then((value) => {
                     if (value.success) {
                         new Notice('Image Generated.');
-                        editor.setLine(position.line, `${value.prompt}${value.text}`);
+                        editor.setLine(position.line, `${value.prompt}\n\n${value.text}`);
+                    } else {
+                        new Notice(value.text);
+                    }
+                });
+			}
+		});
+
+        this.addCommand({
+			id: 'prompt-img-selected',
+			name: 'Generate an image from the selected text',
+			editorCallback: (editor: Editor, view: MarkdownView) => {
+                const selectedText = editor.getSelection();
+                new Notice("Generating image...");  
+                this.generateImage(selectedText).then((value) => {
+                    if (value.success) {
+                        new Notice('Image Generated.');
+                        if (editor.getSelection() === value.prompt) {
+                            editor.replaceSelection(`${value.prompt}\n\n${value.text}`);
+                        } else {
+                            editor.setLine(editor.lastLine(), `${value.prompt}\n\n${value.text}`);
+                        }
                     } else {
                         new Notice(value.text);
                     }
@@ -320,9 +388,9 @@ export default class MyPlugin extends Plugin {
 }
 
 class ApiSettingTab extends PluginSettingTab {
-	plugin: MyPlugin;
+	plugin: AICommanderPlugin;
 
-	constructor(app: App, plugin: MyPlugin) {
+	constructor(app: App, plugin: AICommanderPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
 	}
