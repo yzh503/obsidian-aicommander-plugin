@@ -30,3 +30,9 @@ Call out the command pallette and try the following commands:
 - AI Commander: Generate text from the selected text
 - AI Commander: Generate image from the selected text
 - AI Commander: Generate a transcript from the above audio
+
+# Install from Github 
+
+1. Move manifest.json and main.js to <vault>/.obsidian/plugins/obsidian-aicommander-plugin
+2. Refresh installed plugins
+2. Enable AI Commander
