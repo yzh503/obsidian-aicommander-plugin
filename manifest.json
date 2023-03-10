@@ -1,11 +1,11 @@
 {
-	"id": "obsidian-prompt-ai",
-	"name": "Prompt AI",
+	"id": "obsidian-ai-commander",
+	"name": "AI Commander",
 	"version": "1.0.0",
 	"minAppVersion": "0.15.0",
-	"description": "Use OpenAI APIs to generate text from prompt, notes, and audio files.",
+	"description": "Generate text from prompt, notes, and audio files using OpenAI API and search engine.",
 	"author": "Simon Yang",
 	"authorUrl": "https://yzh503.github.io",
-	"fundingUrl": "https://yzh503.github.io",
+	"fundingUrl": "https://www.buymeacoffee.com/yzh503",
 	"isDesktopOnly": false
 }
