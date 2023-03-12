@@ -29,18 +29,23 @@ export default class AICommanderPlugin extends Plugin {
 	settings: AICommanderPluginSettings;
 
     async improvePrompt(prompt: string, targetModel: string) {
-        const response = await axios.post('https://us-central1-prompt-ops.cloudfunctions.net/optimize', {
-            headers: {
-                'x-api-key': `token ${this.settings.promptPerfectKey}`,
-                'content-type': 'application/json'
-            },
-            params: {
-                prompt: prompt,
-                targetModel: targetModel
-            }
-        })
+        const YOUR_GENERATED_SECRET = '9VFMTHCukRuT5WqOkAD1:8cde275ebde49165527e9c97ecc96abef1e34473458fe8f9f3ecad177a163538';
 
-        if ('promptOptimized' in response) return response.promptOptimized as string;
+        const headers = {
+        'x-api-key': `token ${YOUR_GENERATED_SECRET}`,
+        'Content-Type': 'application/json'
+        };
+
+        const data = {
+        data: {
+            prompt: prompt,
+            targetModel: targetModel
+        }
+        };
+
+        const response = await axios.post('https://us-central1-prompt-ops.cloudfunctions.net/optimize', data, { headers })
+  
+        if ('promptOptimized' in response.data.result) return response.data.result.promptOptimized as string;
         else return prompt;
     }
 
@@ -52,7 +57,6 @@ export default class AICommanderPlugin extends Plugin {
 
         const configuration = new Configuration({ apiKey: this.settings.apiKey });
         const openai = new OpenAIApi(configuration);
-
 
         let messagesToSend: ChatCompletionRequestMessage[];
         let newPrompt = prompt;
@@ -137,7 +141,7 @@ export default class AICommanderPlugin extends Plugin {
         let newPrompt = prompt;
 
         if (this.settings.usePromptPerfect) {
-            newPrompt = await this.improvePrompt(prompt, 'chatgpt');
+            newPrompt = await this.improvePrompt(prompt, 'dalle');
             console.log(newPrompt);
         }
         
@@ -148,13 +152,15 @@ export default class AICommanderPlugin extends Plugin {
             response_format: 'b64_json'
         });
 
+        const size = this.settings.imgSize.split('x')[0];
+
         return({
             prompt: newPrompt, 
-            text: `![](data:image/png;base64,${response.data.data[0].b64_json})\n`
+            text: `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`
         })
     }
 
-    async generateTranscript(audioBuffer: ArrayBuffer, filetype: string, path: string) {
+    async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
 
         // Workaround for issue https://github.com/openai/openai-node/issues/77
         const baseUrl = 'https://api.openai.com/v1/audio/transcriptions';
@@ -334,7 +340,7 @@ export default class AICommanderPlugin extends Plugin {
                 }
                 this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
                     new Notice("Generating transcript...");  
-                    this.generateTranscript(audioBuffer, fileType, path)
+                    this.generateTranscript(audioBuffer, fileType)
                         .then((result) => {
                             new Notice('Transcript Generated.');
                             editor.setLine(position.line, `${line}${result}`);
