@@ -10,6 +10,8 @@ interface AICommanderPluginSettings {
     useSearchEngine: boolean;
     searchEngine: string;
     bingSearchKey: string;
+    usePromptPerfect: boolean;
+    promptPerfectKey: string;
 }
 
 const DEFAULT_SETTINGS: AICommanderPluginSettings = {
@@ -18,11 +20,29 @@ const DEFAULT_SETTINGS: AICommanderPluginSettings = {
     imgSize: '256x256',
     useSearchEngine: false,
     searchEngine: 'bing',
-    bingSearchKey: ''
+    bingSearchKey: '',
+    promptPerfectKey: '',
+    usePromptPerfect: false,
 }
 
 export default class AICommanderPlugin extends Plugin {
 	settings: AICommanderPluginSettings;
+
+    async improvePrompt(prompt: string, targetModel: string) {
+        const response = await axios.post('https://us-central1-prompt-ops.cloudfunctions.net/optimize', {
+            headers: {
+                'x-api-key': `token ${this.settings.promptPerfectKey}`,
+                'content-type': 'application/json'
+            },
+            params: {
+                prompt: prompt,
+                targetModel: targetModel
+            }
+        })
+
+        if ('promptOptimized' in response) return response.promptOptimized as string;
+        else return prompt;
+    }
 
     async generateText(prompt: string) {
 
@@ -35,6 +55,12 @@ export default class AICommanderPlugin extends Plugin {
 
 
         let messagesToSend: ChatCompletionRequestMessage[];
+        let newPrompt = prompt;
+
+        if (this.settings.usePromptPerfect) {
+            newPrompt = await this.improvePrompt(prompt, 'chatgpt');
+            console.log(newPrompt);
+        }
 
         if (this.settings.useSearchEngine) {
             if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
@@ -53,13 +79,13 @@ export default class AICommanderPlugin extends Plugin {
             },
             {
                 role: 'user', 
-                content: prompt
+                content: newPrompt
             }];
             
         } else {
             messagesToSend = [{
                 role: 'user', 
-                content: prompt
+                content: newPrompt
             }];
         }
 
@@ -74,7 +100,7 @@ export default class AICommanderPlugin extends Plugin {
 
         return({
             text: content,
-            prompt: prompt 
+            prompt: newPrompt 
         });
     }
 
@@ -107,16 +133,23 @@ export default class AICommanderPlugin extends Plugin {
             apiKey: this.settings.apiKey,
         });
         const openai = new OpenAIApi(configuration);
+
+        let newPrompt = prompt;
+
+        if (this.settings.usePromptPerfect) {
+            newPrompt = await this.improvePrompt(prompt, 'chatgpt');
+            console.log(newPrompt);
+        }
         
         const response = await openai.createImage({
-            prompt: prompt,
+            prompt: newPrompt,
             n: 1,
             size: this.settings.imgSize as CreateImageRequestSizeEnum,
             response_format: 'b64_json'
         });
 
         return({
-            prompt: prompt, 
+            prompt: newPrompt, 
             text: `![](data:image/png;base64,${response.data.data[0].b64_json})\n`
         })
     }
@@ -420,6 +453,30 @@ class ApiSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.bingSearchKey)
 				.onChange(async (value) => {
 					this.plugin.settings.bingSearchKey = value;
+					await this.plugin.saveSettings();
+				}));
+        
+        containerEl.createEl('h3', {text: 'Prompt Perfect'});
+
+        new Setting(containerEl)
+            .setName('Use Prompt Perfect')
+            .setDesc("Use Prompt Perfect to improve prompts for text and image generation")
+            .addToggle(value => value
+                .setValue(this.plugin.settings.usePromptPerfect)
+                .onChange(async (value) => {
+                    this.plugin.settings.usePromptPerfect = value;
+                    await this.plugin.saveSettings();
+            }));
+        
+        
+        new Setting(containerEl)
+			.setName('Prompt Perfect API key')
+            .setDesc("Find in Prompt Perfect settings")
+			.addText(text => text
+				.setPlaceholder('Enter your key')
+				.setValue(this.plugin.settings.promptPerfectKey)
+				.onChange(async (value) => {
+					this.plugin.settings.promptPerfectKey = value;
 					await this.plugin.saveSettings();
 				}));
 	}

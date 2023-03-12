@@ -12,6 +12,7 @@
 - Generate image from prompt, selected lines or current line. 
 - Generate audio transcript from the last audio file above the current line. 
 - Generate text in conjunction with search engine results. This allows the text model to work with Bing search engine. A [Bing Web Search API](https://www.microsoft.com/en-us/bing/apis/bing-web-search-api) key is required to use this feature.  
+- Use [Prompt Perfect](https://promptperfect.jina.ai/) to automatically improve prompts. Your prompts will be replaced by the improved one. 
 
 # Supported models: 
 
