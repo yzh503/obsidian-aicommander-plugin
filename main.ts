@@ -65,6 +65,8 @@ export default class AICommanderPlugin extends Plugin {
         }
 
         const messages = [];
+
+        console.log(contextPrompt);
         
         if (contextPrompt) {
             messages.push({
@@ -382,7 +384,7 @@ export default class AICommanderPlugin extends Plugin {
 		});
 
         this.addCommand({
-			id: 'prompt-text',
+			id: 'pdf-text',
 			name: 'Generate text from prompt in context of the above PDF',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				const onSubmit = (prompt: string) => {
@@ -403,7 +405,7 @@ export default class AICommanderPlugin extends Plugin {
 		});
 
         this.addCommand({
-			id: 'prompt-text-selected',
+			id: 'pdf-text-selected',
 			name: 'Generate text from the selected text in context of the above PDF',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
