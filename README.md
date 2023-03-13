@@ -12,7 +12,9 @@
 - Generate image from prompt, selected lines or current line. 
 - Generate audio transcript from the last audio file above the current line. 
 - Generate text in conjunction with search engine results. This allows the text model to work with Bing search engine. A [Bing Web Search API](https://www.microsoft.com/en-us/bing/apis/bing-web-search-api) key is required to use this feature.  
+- Generate text in context of the PDF attachment embedded in the note. In this mode, it will not incorporate the search result. 
 - Use [Prompt Perfect](https://promptperfect.jina.ai/) to automatically improve prompts. Your prompts will be replaced by the improved one. 
+
 
 # Supported models: 
 
@@ -31,6 +33,9 @@ Call out the command pallette and try the following commands:
 - AI Commander: Generate text from the selected text
 - AI Commander: Generate image from the selected text
 - AI Commander: Generate a transcript from the above audio
+- AI Commander: Generate text from prompt in context of the above PDF
+- AI Commander: Generate text from the current line in context of the above PDF
+- AI Commander: Generate text from the selected text in context of the above PDF
 
 # Install from Github 
 

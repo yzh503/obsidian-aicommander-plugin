@@ -3,7 +3,7 @@
 	"name": "AI Commander",
 	"version": "1.0.0",
 	"minAppVersion": "1.0.0",
-	"description": "Generate text from prompt, note text and audio files using OpenAI API in conjunction with Bing search.",
+	"description": "Generate audio transcripts, images, and text in context of PDF attachments or web search results using OpenAI and Bing API.",
 	"author": "Simon Yang",
 	"authorUrl": "https://yzh503.github.io",
 	"fundingUrl": "https://www.buymeacoffee.com/yzh503",
