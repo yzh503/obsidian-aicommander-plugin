@@ -641,7 +641,7 @@ class ApiSettingTab extends PluginSettingTab {
 			.setName('Custom command for selected text')
             .setDesc('Fill in your prompts line by line. They will appear as commands.')
 			.addTextArea(text => text
-				.setPlaceholder('Summarise the selected text\nTranslate into English')
+				.setPlaceholder('Summarise the text\nTranslate into English')
 				.setValue(this.plugin.settings.promptsForSelected)
 				.onChange(async (value) => {
 					this.plugin.settings.promptsForSelected = value;
