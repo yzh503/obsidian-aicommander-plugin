@@ -1,7 +1,7 @@
 {
 	"id": "ai-commander",
 	"name": "AI Commander",
-	"version": "1.1.1",
+	"version": "1.1.2",
 	"minAppVersion": "1.0.0",
 	"description": "Generate audio transcripts, images, and text in context of PDF attachments or web search results using OpenAI and Bing API.",
 	"author": "Simon Yang",

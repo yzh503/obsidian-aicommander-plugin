@@ -124,12 +124,7 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async generateImage(prompt: string) {
-
-        if (prompt.length > 1000) return({
-            success: false, 
-            prompt: prompt, 
-            text: 'Prompt needs to be shorter than 1000 characters.'
-        })
+        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const configuration = new Configuration({
             apiKey: this.settings.apiKey,
@@ -158,8 +153,8 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
+        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
-        // Workaround for issue https://github.com/openai/openai-node/issues/77
         const baseUrl = 'https://api.openai.com/v1/audio/transcriptions';
 
         const blob = new Blob([audioBuffer]);
@@ -192,33 +187,80 @@ export default class AICommanderPlugin extends Plugin {
     async getAttachmentDir() {
         const attachmentFolder = await this.app.vault.adapter.read(`${this.app.vault.configDir}/app.json`).then((content: string) => {
             const config = JSON.parse(content);
-            if (config.attachmentFolderPath === '/' || config.attachmentFolderPath === './') {
-                return '';
-            }
-            return config.attachmentFolderPath + '/' || '';
+            if ('attachmentFolderPath' in config) return config.attachmentFolderPath;
+            else return '';
         });
-
         return attachmentFolder as string;
     }
 
-    async findFilePath(text: string, regex: RegExp) {
-
-        const path = await this.getAttachmentDir().then((path) => {
+    // Test cases: 
+    // 1. Attachment Folder: vault, Attachment: /audio.mp3
+    // 2. Attachment Folder: vault, Attachment: /folder/audio.mp3
+    // 3. Attachment Folder: specified, Attachment: /audio.mp3
+    // 4. Attachment Folder: specified, Attachment: /folder/audio.mp3
+    // 5. Attachment Folder: specified, Attachment: /specified/audio.mp3
+    // 6. Attachment Folder: same, Attachment: /audio.mp3
+    // 7. Attachment Folder: same, Attachment: /folder/audio.mp3
+    // 8. Attachment Folder: same, Attachment: /same/audio.mp3
+    // 9. Attachment Folder: subfolder, Attachment: /audio.mp3
+    // 10. Attachment Folder: subfolder, Attachment: /folder/audio.mp3
+    // 11. Attachment Folder: subfolder, Attachment: /same/subfolder/audio.mp3
+    // 12. Attachment Folder: subfolder, Attachment: /same/audio.mp3
+    async findFilePath(text: string, regex: RegExp[]) {
+        const filepath = await this.getAttachmentDir().then((attachmentPath) => {
             let filename = '';
             let result: RegExpExecArray | null;
-            while ((result = regex.exec(text)) !== null) {
-                filename = decodeURI(result[0]);
+            for (const reg of regex) {
+                while ((result = reg.exec(text)) !== null) {
+                    filename = normalizePath(decodeURI(result[0]));
+                }
+            }   
+            
+            const activeFile = this.app.workspace.getActiveFile();
+            if (!activeFile) throw new Error('No active file');
+            const currentPath = activeFile.path.split('/');
+            currentPath.pop();
+            const currentPathString = currentPath.join('/');
+
+            console.log('currentPathString', currentPathString);
+            console.log('attachmentPath', attachmentPath);
+            console.log('filename', filename);
+            
+            const underRootFolder = attachmentPath === '' || attachmentPath === '/';
+            const underCurrentFolder = attachmentPath.startsWith('./');
+            const underSpecificFolder = !underCurrentFolder && !underRootFolder;
+            const fileInSpecificFolder = filename.contains('/');
+
+            console.log(underRootFolder, underCurrentFolder, underSpecificFolder, fileInSpecificFolder);
+
+            let filepath = '';
+
+            if (underRootFolder || fileInSpecificFolder) filepath = filename;
+            if (underSpecificFolder) filepath = attachmentPath + '/' + filename;
+            if (underCurrentFolder) {
+                const attFolder = attachmentPath.substring(2);
+                if (attFolder.length == 0) filepath = currentPathString + '/' + filename;
+                else filepath = currentPathString + '/' + attFolder + '/' + filename;
             }
 
-            if (filename.contains('/') || filename.contains('\\')) {
-                return normalizePath(filename);
-            } else {
-                return normalizePath(path + filename);
-            }
+            return this.app.vault.adapter.exists(filepath).then((exists => {
+                if (exists) return filepath;
+                else {
+                    let path = '';
+                    let found = false;
+                    this.app.vault.getFiles().forEach((file) => {
+                        if (file.name === filename) {
+                            path = file.path;
+                            found = true;
+                        }
+                    });
+                    if (found) return path;
+                    else throw new Error('File not found');
+                }
+            }));
         });
-        return path as string;
+        return filepath as string;
     }
-
 
     async generateTextWithPdf(prompt: string, filepath: string) {
         const pdfBuffer = await this.app.vault.adapter.readBinary(filepath);
@@ -266,12 +308,16 @@ export default class AICommanderPlugin extends Plugin {
     commandGenerateTextWithPdf(editor: Editor, prompt: string, includePrompt: boolean, hasSelected: boolean) {
         const position = editor.getCursor();
         const text = editor.getRange({line: 0, ch: 0}, position);
-        const regex = /(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g;
+        const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g, 
+            /(?<=\[\[)(([^[\]])+)\.pdf(?=]])/g];
         this.findFilePath(text, regex).then((path) => {
+            console.log('path', path);
             new Notice(`Generating text in context of ${path}...`);  
             this.generateTextWithPdf(prompt, path).then((data) => {
                 this.processGeneratedText(editor, position.line, data, includePrompt, hasSelected);
-            })
+            }).catch(error => {
+                new Notice(error.message);
+            });
         }).catch(error => {
             new Notice(error.message);
         });
@@ -292,20 +338,29 @@ export default class AICommanderPlugin extends Plugin {
         const position = editor.getCursor();
         const line = editor.getLine(position.line)
         const text = editor.getRange({line: 0, ch: 0}, position);
-        const regex = /(?<=\[(.*)]\()(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=\))/g;
+        const regex = [/(?<=\[\[)(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=]])/g, 
+            /(?<=\[(.*)]\()(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=\))/g];
         this.findFilePath(text, regex).then((path) => {
             const fileType = path.split('.').pop();
             if (fileType == undefined || fileType == null || fileType == '') {
                 new Notice('No audio file found');
-                return;
-            }
-            this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
-                new Notice("Generating transcript...");  
-                this.generateTranscript(audioBuffer, fileType).then((result) => {
-                    new Notice('Transcript Generated.');
-                    editor.setLine(position.line, `${line}${result}\n`);
+            } else {
+                this.app.vault.adapter.exists(path).then((exists) => {
+                    console.log('Audio filepath', path);
+                    if (!exists) throw new Error(path + ' does not exist');
+                    this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
+                        new Notice("Generating transcript...");  
+                        this.generateTranscript(audioBuffer, fileType).then((result) => {
+                            new Notice('Transcript Generated.');
+                            editor.setLine(position.line, `${line}${result}\n`);
+                        });
+                    }).catch(error => {
+                        new Notice(error.message);
+                    });
+                }).catch(error => {
+                    new Notice(error.message);
                 });
-            })
+            }
         }).catch(error => {
             new Notice(error.message);
         });
