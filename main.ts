@@ -50,9 +50,7 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async generateText(prompt: string, contextPrompt?: string) {
-
         if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
-
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const configuration = new Configuration({ apiKey: this.settings.apiKey });
@@ -124,6 +122,7 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async generateImage(prompt: string) {
+        if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const configuration = new Configuration({
