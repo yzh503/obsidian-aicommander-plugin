@@ -2,7 +2,7 @@
 
 <a href="https://www.buymeacoffee.com/yzh503" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 40px !important;width: 150px !important;" ></a>
 
-**AI Commander** is an open-source AI connector that helps you write notes with the power of OpenAI APIs in conjunction with Bing search engine.
+**AI Commander** is a simple AI connector that helps you write notes with the power of OpenAI APIs in conjunction with Bing search engine.
 
 [OpenAI API key](https://platform.openai.com/account/api-keys) is required to use this plugin.
 
@@ -39,6 +39,6 @@ Call out the command pallette and try the following commands:
 
 ## Install from Github 
 
-1. Move `manifest.json` and `main.js` to `<vault>/.obsidian/plugins/obsidian-aicommander-plugin`
+1. From the release page, download `manifest.json` and `main.js` to `<vault>/.obsidian/plugins/obsidian-aicommander-plugin`
 2. Refresh installed plugins
 3. Enable AI Commander
