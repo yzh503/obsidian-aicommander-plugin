@@ -12,6 +12,8 @@ interface AICommanderPluginSettings {
     bingSearchKey: string;
     usePromptPerfect: boolean;
     promptPerfectKey: string;
+    promptsForSelected: string;
+    promptsForPdf: string
 }
 
 const DEFAULT_SETTINGS: AICommanderPluginSettings = {
@@ -23,6 +25,8 @@ const DEFAULT_SETTINGS: AICommanderPluginSettings = {
     bingSearchKey: '',
     promptPerfectKey: '',
     usePromptPerfect: false,
+    promptsForSelected: '',
+    promptsForPdf: ''
 }
 
 export default class AICommanderPlugin extends Plugin {
@@ -467,6 +471,37 @@ export default class AICommanderPlugin extends Plugin {
 			}
 		});
 
+        const extraCommandsForSelected = this.settings.promptsForSelected.split('\n');
+        for (let command of extraCommandsForSelected) {
+            command = command.trim();
+            if (command == null || command == undefined || command.length < 1) continue;
+            const cid = command.toLowerCase().replace(/ /g, '-');
+            this.addCommand({
+                id: cid,
+                name: command,
+                editorCallback: (editor: Editor, view: MarkdownView) => {
+                    const selectedText = editor.getSelection();
+                    const prompt = 'You are an assistant who can learn from the text I give to you. Here is the text:\n\n' + selectedText + '\n\n' + command;
+                    this.commandGenerateText(editor, prompt, false, true);
+                }
+            });
+        }
+
+        const extraCommandsForPdf = this.settings.promptsForPdf.split('\n');
+        for (let command of extraCommandsForPdf) {
+            command = command.trim();
+            if (command == null || command == undefined || command.length < 1) continue;
+            const cid = command.toLowerCase().replace(/ /g, '-');
+            this.addCommand({
+                id: cid,
+                name: command,
+                editorCallback: (editor: Editor, view: MarkdownView) => {
+                    this.commandGenerateTextWithPdf(editor, command, false, false);
+                }
+            });
+        }
+    
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new ApiSettingTab(this.app, this));
 
@@ -504,8 +539,7 @@ class ApiSettingTab extends PluginSettingTab {
 	display(): void {
 		const {containerEl} = this;
 		containerEl.empty();
-		containerEl.createEl('h2', {text: 'Settings'});
-        containerEl.createEl('h3', {text: 'OpenAI API'});
+        containerEl.createEl('h2', {text: 'OpenAI API'});
         
 		new Setting(containerEl)
 			.setName('OpenAI API key')
@@ -542,7 +576,7 @@ class ApiSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
         
-        containerEl.createEl('h3', {text: 'Search Engine'});
+        containerEl.createEl('h2', {text: 'Search Engine'});
         
         new Setting(containerEl)
             .setName('Use search engine')
@@ -576,7 +610,7 @@ class ApiSettingTab extends PluginSettingTab {
 					await this.plugin.saveSettings();
 				}));
         
-        containerEl.createEl('h3', {text: 'Prompt Perfect'});
+        containerEl.createEl('h2', {text: 'Prompt Perfect'});
 
         new Setting(containerEl)
             .setName('Use Prompt Perfect')
@@ -597,6 +631,31 @@ class ApiSettingTab extends PluginSettingTab {
 				.setValue(this.plugin.settings.promptPerfectKey)
 				.onChange(async (value) => {
 					this.plugin.settings.promptPerfectKey = value;
+					await this.plugin.saveSettings();
+				}));
+
+        containerEl.createEl('h2', {text: 'Custom Commands'}); 
+        containerEl.createEl('p', {text: 'Reload the plugin after changing below settings'}); 
+
+        new Setting(containerEl)
+			.setName('Custom command for selected text')
+            .setDesc('Fill in your prompts line by line. They will appear as commands.')
+			.addTextArea(text => text
+				.setPlaceholder('Summarise the selected text\nTranslate into English')
+				.setValue(this.plugin.settings.promptsForSelected)
+				.onChange(async (value) => {
+					this.plugin.settings.promptsForSelected = value;
+					await this.plugin.saveSettings();
+				}));
+        
+        new Setting(containerEl)
+			.setName('Custom command for PDF')
+            .setDesc('Fill in your prompts line by line. They will appear as commands.')
+			.addTextArea(text => text
+				.setPlaceholder('Summarise the PDF')
+				.setValue(this.plugin.settings.promptsForPdf)
+				.onChange(async (value) => {
+					this.plugin.settings.promptsForPdf = value;
 					await this.plugin.saveSettings();
 				}));
 	}
