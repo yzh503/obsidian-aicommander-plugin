@@ -69,8 +69,6 @@ export default class AICommanderPlugin extends Plugin {
         }
 
         const messages = [];
-
-        console.log(contextPrompt);
         
         if (contextPrompt) {
             messages.push({
@@ -340,7 +338,7 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     getNextEmptyLine(editor: Editor) {
-        let line = editor.getCursor().line;
+        let line = editor.getCursor('to').line;
         while (editor.getLine(line).trim() !== '') line++;
 
         if (line == editor.lastLine()) {
@@ -351,22 +349,23 @@ export default class AICommanderPlugin extends Plugin {
         return line;
     }
 
-    processGeneratedText(editor: Editor, data: any) {
+    processGeneratedText(editor: Editor, data: any, lineToInsert: number) {
         new Notice('Text Generated.');
-        const nextEmptyLine = this.getNextEmptyLine(editor);
-        editor.setLine(nextEmptyLine, '\n\n' + data.text.trim() + '\n\n');
+        editor.setLine(lineToInsert, '\n\n' + data.text.trim() + '\n\n');
     }
 
     commandGenerateText(editor: Editor, prompt: string) {
+        const lineToInsert = this.getNextEmptyLine(editor);
         new Notice("Generating text...");  
         this.generateText(prompt).then((data) => {
-            this.processGeneratedText(editor, data);
+            this.processGeneratedText(editor, data, lineToInsert);
         }).catch(error => {
             new Notice(error.message);
         });
     }
 
     commandGenerateTextWithPdf(editor: Editor, prompt: string) {
+        const lineToInsert = this.getNextEmptyLine(editor);
         const position = editor.getCursor();
         const text = editor.getRange({line: 0, ch: 0}, position);
         const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g, 
@@ -375,7 +374,7 @@ export default class AICommanderPlugin extends Plugin {
             console.log('path', path);
             new Notice(`Generating text in context of ${path}...`);  
             this.generateTextWithPdf(prompt, path).then((data) => {
-                this.processGeneratedText(editor, data);
+                this.processGeneratedText(editor, data, lineToInsert);
             }).catch(error => {
                 new Notice(error.message);
             });
@@ -385,10 +384,11 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     commandGenerateImage(editor: Editor, prompt: string) {
+        const lineToInsert = this.getNextEmptyLine(editor);
         new Notice("Generating image...");  
         this.generateImage(prompt).then((data) => {
             new Notice('Image Generated.');
-            this.processGeneratedText(editor, data);
+            this.processGeneratedText(editor, data, lineToInsert);
         }).catch(error => {
             new Notice(error.message);
         });
