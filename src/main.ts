@@ -1,7 +1,6 @@
-import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs} from 'obsidian';
+import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder} from 'obsidian';
 import { PromptModal } from "./modal";
 import { Configuration, OpenAIApi, CreateImageRequestSizeEnum, ChatCompletionRequestMessage } from "openai";
-import axios from 'axios';
 
 interface AICommanderPluginSettings {
 	model: string;
@@ -35,24 +34,28 @@ export default class AICommanderPlugin extends Plugin {
 	settings: AICommanderPluginSettings;
 
     async improvePrompt(prompt: string, targetModel: string) {
-        const YOUR_GENERATED_SECRET = '9VFMTHCukRuT5WqOkAD1:8cde275ebde49165527e9c97ecc96abef1e34473458fe8f9f3ecad177a163538';
-
-        const headers = {
-        'x-api-key': `token ${YOUR_GENERATED_SECRET}`,
-        'Content-Type': 'application/json'
-        };
 
         const data = {
-        data: {
-            prompt: prompt,
-            targetModel: targetModel
-        }
+            data: {
+                prompt: prompt,
+                targetModel: targetModel
+            }
         };
 
-        const response = await axios.post('https://us-central1-prompt-ops.cloudfunctions.net/optimize', data, { headers })
+        const params = {
+            url: 'https://us-central1-prompt-ops.cloudfunctions.net/optimize',
+            method: 'POST',
+            contentType: 'application/json',
+            body: JSON.stringify(data),
+            headers: {
+                'x-api-key': `token ${this.settings.promptPerfectKey}`,
+            }
+        }
+
+        const response = await requestUrl(params);
   
-        if ('promptOptimized' in response.data.result) return response.data.result.promptOptimized as string;
-        else return prompt;
+        if ('promptOptimized' in response.json.result) return response.json.result.promptOptimized as string;
+        else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
     }
 
     async generateText(prompt: string, contextPrompt?: string) {
@@ -109,32 +112,8 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async getImageBase64(url: string) {
-        return fetch(url)
-          .then(response => response.blob())
-          .then(blob => {
-            return new Promise((resolve, reject) => {
-              const reader = new FileReader();
-              reader.onload = () => {
-                resolve(reader.result);
-              };
-              reader.onerror = () => {
-                reject(new Error("Failed to convert image to base64"));
-              };
-              reader.readAsDataURL(blob);
-            });
-        });
-    }
-
-    generateRandomString(length: number): string {
-        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        const charactersLength = characters.length;
-        let result = '';
-      
-        for (let i = 0; i < length; i++) {
-          result += characters.charAt(Math.floor(Math.random() * charactersLength));
-        }
-      
-        return result;
+        const buffer = await requestUrl(url).arrayBuffer;
+        return arrayBufferToBase64(buffer);
     }
 
     async generateImage(prompt: string) {
@@ -180,16 +159,12 @@ export default class AICommanderPlugin extends Plugin {
         if (fileDir.length > 1) {
             fileDir.pop();
             const dirPath = fileDir.join('/');
-            await this.app.vault.adapter.exists(dirPath).then((exists) => {
-                if (exists) return;
-                return this.app.vault.adapter.mkdir(dirPath);
-            });
+            const exists = this.app.vault.getAbstractFileByPath(dirPath) instanceof TFolder;
+            if(!exists) await this.app.vault.createFolder(dirPath);
         }
 
-        await this.app.vault.adapter.writeBinary(filepath, buffer);
+        await this.app.vault.createBinary(filepath, buffer);
 
-        console.log(this.settings.saveImg);
-        
         if (this.settings.saveImg == 'attachment') {
             return({
                 prompt: prompt, 
@@ -207,41 +182,49 @@ export default class AICommanderPlugin extends Plugin {
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const baseUrl = 'https://api.openai.com/v1/audio/transcriptions';
-
         const blob = new Blob([audioBuffer]);
-
         const formData = new FormData();
         formData.append('file', blob, 'audio.' + filetype);
         formData.append('model', 'whisper-1');
 
-        return axios.post(baseUrl, formData, {
+        const params = {
+            url: baseUrl,
+            method: 'POST',
+            contentType: 'multipart/form-data',
+            body: JSON.stringify(formData),
             headers: {
-                'Content-Type': 'multipart/form-data',
                 'Authorization': 'Bearer ' + this.settings.apiKey
             }
-        }).then(response => response.data.text)
+        }
+
+        const text = await requestUrl(params).text;
+        return text;
     }
 
     async searchText(prompt: string) {
-        const response = await axios.get('https://api.bing.microsoft.com/v7.0/search', {
+
+        const params = {
+            url: 'https://api.bing.microsoft.com/v7.0/search',
+            method: 'GET',
+            contentType: 'application/json',
+            body: JSON.stringify({
+                q: prompt, 
+                count: 20
+            }),
             headers: {
                 'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey
-            },
-            params: {
-                q: prompt,
             }
-        })
-
-        return response.data.webPages.value;
+        };
+        const response = await requestUrl(params);
+        if ('webPages' in response.json && 'value' in response.json.webPages) return response.json.webPages.value;
+        else throw new Error('No web search results: ' + JSON.stringify(response.json));
     } 
 
     async getAttachmentDir() {
-        const attachmentFolder = await this.app.vault.adapter.read(`${this.app.vault.configDir}/app.json`).then((content: string) => {
-            const config = JSON.parse(content);
-            if ('attachmentFolderPath' in config) return config.attachmentFolderPath;
-            else return '';
-        });
-        return attachmentFolder as string;
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) throw new Error('No active file');
+        const dir = this.app.vault.getAvaiablePathForAttachments(activeFile.basename, activeFile?.extension, activeFile );
+        return dir;
     }
 
     getCurrentPath() {
@@ -253,19 +236,6 @@ export default class AICommanderPlugin extends Plugin {
         return currentPathString;
     }
 
-    // Test cases: 
-    // 1. Attachment Folder: vault, Attachment: /audio.mp3
-    // 2. Attachment Folder: vault, Attachment: /folder/audio.mp3
-    // 3. Attachment Folder: specified, Attachment: /audio.mp3
-    // 4. Attachment Folder: specified, Attachment: /folder/audio.mp3
-    // 5. Attachment Folder: specified, Attachment: /specified/audio.mp3
-    // 6. Attachment Folder: same, Attachment: /audio.mp3
-    // 7. Attachment Folder: same, Attachment: /folder/audio.mp3
-    // 8. Attachment Folder: same, Attachment: /same/audio.mp3
-    // 9. Attachment Folder: subfolder, Attachment: /audio.mp3
-    // 10. Attachment Folder: subfolder, Attachment: /folder/audio.mp3
-    // 11. Attachment Folder: subfolder, Attachment: /same/subfolder/audio.mp3
-    // 12. Attachment Folder: subfolder, Attachment: /same/audio.mp3
     async findFilePath(text: string, regex: RegExp[]) {
         const filepath = await this.getAttachmentDir().then((attachmentPath) => {
             let filename = '';
@@ -337,6 +307,18 @@ export default class AICommanderPlugin extends Plugin {
         return this.generateText(prompt, context);
     }
 
+    generateRandomString(length: number): string {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        const charactersLength = characters.length;
+        let result = '';
+      
+        for (let i = 0; i < length; i++) {
+          result += characters.charAt(Math.floor(Math.random() * charactersLength));
+        }
+      
+        return result;
+    }
+
     getNextEmptyLine(editor: Editor) {
         let line = editor.getCursor('to').line;
         while (editor.getLine(line).trim() !== '') line++;
@@ -360,6 +342,7 @@ export default class AICommanderPlugin extends Plugin {
         this.generateText(prompt).then((data) => {
             this.processGeneratedText(editor, data, lineToInsert);
         }).catch(error => {
+            console.log(error.message);
             new Notice(error.message);
         });
     }
@@ -376,9 +359,11 @@ export default class AICommanderPlugin extends Plugin {
             this.generateTextWithPdf(prompt, path).then((data) => {
                 this.processGeneratedText(editor, data, lineToInsert);
             }).catch(error => {
+                console.log(error.message);
                 new Notice(error.message);
             });
         }).catch(error => {
+            console.log(error.message);
             new Notice(error.message);
         });
     }
@@ -390,6 +375,7 @@ export default class AICommanderPlugin extends Plugin {
             new Notice('Image Generated.');
             this.processGeneratedText(editor, data, lineToInsert);
         }).catch(error => {
+            console.log(error.message);
             new Notice(error.message);
         });
     }
@@ -415,13 +401,16 @@ export default class AICommanderPlugin extends Plugin {
                             editor.setLine(position.line, `${line}${result}\n`);
                         });
                     }).catch(error => {
+                        console.log(error.message);
                         new Notice(error.message);
                     });
                 }).catch(error => {
+                    console.log(error.message);
                     new Notice(error.message);
                 });
             }
         }).catch(error => {
+            console.log(error.message);
             new Notice(error.message);
         });
     }
@@ -561,12 +550,6 @@ export default class AICommanderPlugin extends Plugin {
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new ApiSettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			console.log('click', evt);
-		});
 
 		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
 		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
