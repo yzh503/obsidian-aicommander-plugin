@@ -1,6 +1,7 @@
 import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder} from 'obsidian';
 import { PromptModal } from "./modal";
 import { Configuration, OpenAIApi, CreateImageRequestSizeEnum, ChatCompletionRequestMessage } from "openai";
+import { OpenAIClient } from '@fern-api/openai';
 
 interface AICommanderPluginSettings {
 	model: string;
@@ -56,6 +57,73 @@ export default class AICommanderPlugin extends Plugin {
   
         if ('promptOptimized' in response.json.result) return response.json.result.promptOptimized as string;
         else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
+    }
+
+    async generateText2(editor: Editor, prompt: string, lineToInsert: number, onFinish?: () => void, contextPrompt?: string) {
+        if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
+        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
+
+        let newPrompt = prompt;
+
+        if (this.settings.usePromptPerfect) {
+            newPrompt = await this.improvePrompt(prompt, 'chatgpt');
+        }
+
+        const messages = [];
+        
+        if (contextPrompt) {
+            messages.push({
+                role: 'system',
+                content: contextPrompt
+            });
+        } else if (this.settings.useSearchEngine) {
+            if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
+            const searchResult = await this.searchText(prompt)
+            messages.push({
+                role: 'system',
+                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API JSON response into your answers when responding to questions. Your response should include the relevant information from the JSON and provide attribution by mentioning the source of information with its url in the format of markdown. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult)
+            });
+        } 
+
+        messages.push({
+            role: 'user', 
+            content: newPrompt
+        });
+
+        const client = new OpenAIClient({
+            token: this.settings.apiKey,
+        });
+          
+        let line = '';
+        let message = '';
+        let targetLine = lineToInsert;
+        
+        client.chat.createCompletion({
+            model: this.settings.model,
+            messages: messages as ChatCompletionRequestMessage[],
+            stream: true,
+        }, (data: any) => {
+            const delta = data.choices[0].delta;
+            if ('content' in delta) {
+                const content = delta.content as string;
+                message += content;
+                console.log(message);
+                while (message.includes('\n')) {
+                    const newlineIndex = message.indexOf('\n');
+                    if (newlineIndex >= 0) {
+                        line = message.substring(0, newlineIndex + 1);
+                        editor.setLine(targetLine, line.trim());
+                        targetLine++;
+                        message = message.substring(newlineIndex + 2);
+                    }
+                }
+            }
+        }, {
+            onError: (error: any) => {
+                throw new Error("Stream Error: " + JSON.stringify(error));
+            },
+            onFinish: onFinish,
+        });
     }
 
     async generateText(prompt: string, contextPrompt?: string) {
@@ -339,8 +407,8 @@ export default class AICommanderPlugin extends Plugin {
     commandGenerateText(editor: Editor, prompt: string) {
         const lineToInsert = this.getNextEmptyLine(editor);
         new Notice("Generating text...");  
-        this.generateText(prompt).then((data) => {
-            this.processGeneratedText(editor, data, lineToInsert);
+        this.generateText2(editor, prompt, lineToInsert, () => {
+            new Notice('Text Generated.');
         }).catch(error => {
             console.log(error.message);
             new Notice(error.message);

@@ -12,6 +12,7 @@
 	"author": "",
 	"license": "MIT",
 	"devDependencies": {
+		"@fern-api/openai": "^0.0.23",
 		"@types/node": "^16.11.6",
 		"@types/stream-buffers": "^3.0.4",
 		"@types/textract": "^2.4.1",
