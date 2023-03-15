@@ -72,15 +72,15 @@ export default class AICommanderPlugin extends Plugin {
         
         if (contextPrompt) {
             messages.push({
-                role: 'user',
+                role: 'system',
                 content: contextPrompt
             });
         } else if (this.settings.useSearchEngine) {
             if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
             const searchResult = await this.searchText(prompt)
             messages.push({
-                role: 'user',
-                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API response into your answers when responding to questions. Your response should include the relevant information from the search API response and provide attribution by mentioning the source of information with the url. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult)
+                role: 'system',
+                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API JSON response into your answers when responding to questions. Your response should include the relevant information from the JSON and provide attribution by mentioning the source of information with its url in the format of markdown. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult)
             });
         } 
 
