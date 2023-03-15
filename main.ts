@@ -7,19 +7,21 @@ interface AICommanderPluginSettings {
 	model: string;
     apiKey: string;
     imgSize: string;
+    saveImg: string;
     useSearchEngine: boolean;
     searchEngine: string;
     bingSearchKey: string;
     usePromptPerfect: boolean;
     promptPerfectKey: string;
     promptsForSelected: string;
-    promptsForPdf: string
+    promptsForPdf: string;
 }
 
 const DEFAULT_SETTINGS: AICommanderPluginSettings = {
 	model: 'gpt-3.5-turbo',
     apiKey: '',
     imgSize: '256x256',
+    saveImg: 'attachment',
     useSearchEngine: false,
     searchEngine: 'bing',
     bingSearchKey: '',
@@ -125,6 +127,18 @@ export default class AICommanderPlugin extends Plugin {
         });
     }
 
+    generateRandomString(length: number): string {
+        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+        const charactersLength = characters.length;
+        let result = '';
+      
+        for (let i = 0; i < length; i++) {
+          result += characters.charAt(Math.floor(Math.random() * charactersLength));
+        }
+      
+        return result;
+    }
+
     async generateImage(prompt: string) {
         if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
@@ -149,10 +163,46 @@ export default class AICommanderPlugin extends Plugin {
 
         const size = this.settings.imgSize.split('x')[0];
 
-        return({
-            prompt: prompt, 
-            text: `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`
-        })
+        const currentPathString = this.getCurrentPath();
+
+        const filepath = await this.getAttachmentDir().then((attachmentPath) => {
+            let dir = ''
+            if (attachmentPath == '' || attachmentPath == '/') dir = '';
+            else if (attachmentPath.startsWith('./')) dir = currentPathString + '/' + attachmentPath.substring(2);
+            else dir = attachmentPath;
+
+            const path = dir.trim() + '/' + this.generateRandomString(20) + '.png';
+            return path.replace(/\/\//g, '/');
+        }); 
+        const base64 = response.data.data[0].b64_json as string;
+        const buffer = Buffer.from(base64, 'base64');
+        
+
+        const fileDir = filepath.split('/')
+        if (fileDir.length > 1) {
+            fileDir.pop();
+            const dirPath = fileDir.join('/');
+            await this.app.vault.adapter.exists(dirPath).then((exists) => {
+                if (exists) return;
+                return this.app.vault.adapter.mkdir(dirPath);
+            });
+        }
+
+        await this.app.vault.adapter.writeBinary(filepath, buffer);
+
+        console.log(this.settings.saveImg);
+        
+        if (this.settings.saveImg == 'attachment') {
+            return({
+                prompt: prompt, 
+                text: `![${size}](${encodeURI(filepath)})\n`
+            });
+        } else {
+            return({
+                prompt: prompt, 
+                text: `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`
+            });
+        }
     }
 
     async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
@@ -196,6 +246,15 @@ export default class AICommanderPlugin extends Plugin {
         return attachmentFolder as string;
     }
 
+    getCurrentPath() {
+        const activeFile = this.app.workspace.getActiveFile();
+        if (!activeFile) throw new Error('No active file');
+        const currentPath = activeFile.path.split('/');
+        currentPath.pop();
+        const currentPathString = currentPath.join('/');
+        return currentPathString;
+    }
+
     // Test cases: 
     // 1. Attachment Folder: vault, Attachment: /audio.mp3
     // 2. Attachment Folder: vault, Attachment: /folder/audio.mp3
@@ -221,11 +280,7 @@ export default class AICommanderPlugin extends Plugin {
 
             if (filename == '') throw new Error('No file found in the text.');
             
-            const activeFile = this.app.workspace.getActiveFile();
-            if (!activeFile) throw new Error('No active file');
-            const currentPath = activeFile.path.split('/');
-            currentPath.pop();
-            const currentPathString = currentPath.join('/');
+            const currentPathString = this.getCurrentPath();
 
             console.log('currentPathString', currentPathString);
             console.log('attachmentPath', attachmentPath);
@@ -575,6 +630,18 @@ class ApiSettingTab extends PluginSettingTab {
                 .setValue(this.plugin.settings.imgSize)
 				.onChange(async (value) => {
 					this.plugin.settings.imgSize = value;
+					await this.plugin.saveSettings();
+				}));
+        
+        new Setting(containerEl)
+            .setName('Image Format')
+            .setDesc('Select how you want to save the image')
+            .addDropdown(dropdown => dropdown
+                .addOption('base64', 'base64')
+                .addOption('attachment', 'attachment')
+                .setValue(this.plugin.settings.saveImg)
+				.onChange(async (value) => {
+					this.plugin.settings.saveImg = value;
 					await this.plugin.saveSettings();
 				}));
         
