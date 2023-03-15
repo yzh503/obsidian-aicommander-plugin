@@ -215,9 +215,11 @@ export default class AICommanderPlugin extends Plugin {
             let result: RegExpExecArray | null;
             for (const reg of regex) {
                 while ((result = reg.exec(text)) !== null) {
-                    filename = normalizePath(decodeURI(result[0]));
+                    filename = normalizePath(decodeURI(result[0])).trim();
                 }
             }   
+
+            if (filename == '') throw new Error('No file found in the text.');
             
             const activeFile = this.app.workspace.getActiveFile();
             if (!activeFile) throw new Error('No active file');
@@ -282,33 +284,34 @@ export default class AICommanderPlugin extends Plugin {
         return this.generateText(prompt, context);
     }
 
-    processGeneratedText(editor: Editor, targetLine: number, data: any, includePrompt: boolean, hasSelected: boolean) {
-        new Notice('Text Generated.');
+    getNextEmptyLine(editor: Editor) {
+        let line = editor.getCursor().line;
+        while (editor.getLine(line).trim() !== '') line++;
 
-        let newLine = '';
-        if (includePrompt) newLine = `${data.prompt}\n\n${data.text.trimStart()}\n`;
-        else newLine = `${data.text}\n`;
+        if (line == editor.lastLine()) {
+            editor.setLine(line, editor.getLine(line) + '\n');
+            line++;
+        }
 
-        const selectionNotChanged = editor.getSelection() === data.prompt;
-        if (hasSelected && selectionNotChanged) editor.replaceSelection(newLine);
-        else if (hasSelected && !selectionNotChanged) editor.setLine(editor.lastLine(), newLine);
-        else if (!hasSelected) editor.setLine(targetLine, newLine);
-        else throw new Error('Programmer error');
-
-        editor.setCursor({line: targetLine + 1, ch: 0});
+        return line;
     }
 
-    commandGenerateText(editor: Editor, prompt: string, includePrompt: boolean, hasSelected: boolean) {
-        const position = editor.getCursor();
+    processGeneratedText(editor: Editor, data: any) {
+        new Notice('Text Generated.');
+        const nextEmptyLine = this.getNextEmptyLine(editor);
+        editor.setLine(nextEmptyLine, '\n\n' + data.text.trim() + '\n\n');
+    }
+
+    commandGenerateText(editor: Editor, prompt: string) {
         new Notice("Generating text...");  
         this.generateText(prompt).then((data) => {
-            this.processGeneratedText(editor, position.line, data, includePrompt, hasSelected);
+            this.processGeneratedText(editor, data);
         }).catch(error => {
             new Notice(error.message);
         });
     }
 
-    commandGenerateTextWithPdf(editor: Editor, prompt: string, includePrompt: boolean, hasSelected: boolean) {
+    commandGenerateTextWithPdf(editor: Editor, prompt: string) {
         const position = editor.getCursor();
         const text = editor.getRange({line: 0, ch: 0}, position);
         const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g, 
@@ -317,7 +320,7 @@ export default class AICommanderPlugin extends Plugin {
             console.log('path', path);
             new Notice(`Generating text in context of ${path}...`);  
             this.generateTextWithPdf(prompt, path).then((data) => {
-                this.processGeneratedText(editor, position.line, data, includePrompt, hasSelected);
+                this.processGeneratedText(editor, data);
             }).catch(error => {
                 new Notice(error.message);
             });
@@ -326,12 +329,11 @@ export default class AICommanderPlugin extends Plugin {
         });
     }
 
-    commandGenerateImage(editor: Editor, prompt: string, includePrompt: boolean, hasSelected: boolean) {
-        const position = editor.getCursor();
+    commandGenerateImage(editor: Editor, prompt: string) {
         new Notice("Generating image...");  
         this.generateImage(prompt).then((data) => {
             new Notice('Image Generated.');
-            this.processGeneratedText(editor, position.line, data, includePrompt, hasSelected);
+            this.processGeneratedText(editor, data);
         }).catch(error => {
             new Notice(error.message);
         });
@@ -373,44 +375,44 @@ export default class AICommanderPlugin extends Plugin {
 		await this.loadSettings();
 
 		this.addCommand({
-			id: 'prompt-text',
+			id: 'text-prompt',
 			name: 'Generate text from prompt',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				const onSubmit = (prompt: string) => {
-                    this.commandGenerateText(editor, prompt, false, false);
+                    this.commandGenerateText(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
 			}
 		});
 
         this.addCommand({
-			id: 'prompt-img',
+			id: 'img-prompt',
 			name: 'Generate an image from prompt',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				const onSubmit = (prompt: string) => {
-                   this.commandGenerateImage(editor, prompt, false, false);
+                   this.commandGenerateImage(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
 			}
 		});
 
         this.addCommand({
-			id: 'prompt-text-line',
+			id: 'img-line',
 			name: 'Generate text from the current line',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineContent = editor.getLine(position.line);
-                this.commandGenerateText(editor, lineContent, true, false);
+                this.commandGenerateText(editor, lineContent);
 			}
 		});
 
         this.addCommand({
-			id: 'prompt-img-line',
+			id: 'img-line',
 			name: 'Generate an image from the current line',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineContent = editor.getLine(position.line);
-                this.commandGenerateImage(editor, lineContent, true, false);
+                this.commandGenerateImage(editor, lineContent);
 			}
 		});
 
@@ -419,17 +421,17 @@ export default class AICommanderPlugin extends Plugin {
 			name: 'Generate text from the selected text',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
-                this.commandGenerateText(editor, selectedText, true, true);
+                this.commandGenerateText(editor, selectedText);
 			}
 		});
 
         this.addCommand({
-			id: 'prompt-img-selected',
+			id: 'img-selected',
 			name: 'Generate an image from the selected text',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
                 new Notice("Generating image...");  
-                this.commandGenerateImage(editor, selectedText, true, true);
+                this.commandGenerateImage(editor, selectedText);
 			}
 		});
 
@@ -442,32 +444,32 @@ export default class AICommanderPlugin extends Plugin {
 		});
 
         this.addCommand({
-			id: 'pdf-text',
+			id: 'pdf-prompt',
 			name: 'Generate text from prompt in context of the above PDF',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
 				const onSubmit = (prompt: string) => {
-                    this.commandGenerateTextWithPdf(editor, prompt, false, false);
+                    this.commandGenerateTextWithPdf(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
 			}
 		});
 
         this.addCommand({
-			id: 'pdf-text-line',
+			id: 'pdf-line',
 			name: 'Generate text from the current line in context of the above PDF',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineCotent = editor.getLine(position.line)
-                this.commandGenerateTextWithPdf(editor, lineCotent, true, false);
+                this.commandGenerateTextWithPdf(editor, lineCotent);
 			}
 		});
 
         this.addCommand({
-			id: 'pdf-text-selected',
+			id: 'pdf-selected',
 			name: 'Generate text from the selected text in context of the above PDF',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
-                this.commandGenerateTextWithPdf(editor, selectedText, true, true);
+                this.commandGenerateTextWithPdf(editor, selectedText);
 			}
 		});
 
@@ -476,13 +478,14 @@ export default class AICommanderPlugin extends Plugin {
             command = command.trim();
             if (command == null || command == undefined || command.length < 1) continue;
             const cid = command.toLowerCase().replace(/ /g, '-');
+            console.log(cid);
             this.addCommand({
                 id: cid,
                 name: command,
                 editorCallback: (editor: Editor, view: MarkdownView) => {
                     const selectedText = editor.getSelection();
-                    const prompt = 'You are an assistant who can learn from the text I give to you. Here is the text:\n\n' + selectedText + '\n\n' + command;
-                    this.commandGenerateText(editor, prompt, false, true);
+                    const prompt = 'You are an assistant who can learn from the text I give to you. Here is the text selected:\n\n' + selectedText + '\n\n' + command;
+                    this.commandGenerateText(editor, prompt);
                 }
             });
         }
@@ -492,11 +495,12 @@ export default class AICommanderPlugin extends Plugin {
             command = command.trim();
             if (command == null || command == undefined || command.length < 1) continue;
             const cid = command.toLowerCase().replace(/ /g, '-');
+            console.log(cid);
             this.addCommand({
                 id: cid,
                 name: command,
                 editorCallback: (editor: Editor, view: MarkdownView) => {
-                    this.commandGenerateTextWithPdf(editor, command, false, false);
+                    this.commandGenerateTextWithPdf(editor, command);
                 }
             });
         }
