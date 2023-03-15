@@ -397,7 +397,7 @@ export default class AICommanderPlugin extends Plugin {
 		});
 
         this.addCommand({
-			id: 'img-line',
+			id: 'text-line',
 			name: 'Generate text from the current line',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
@@ -417,7 +417,7 @@ export default class AICommanderPlugin extends Plugin {
 		});
 
         this.addCommand({
-			id: 'prompt-text-selected',
+			id: 'text-selected',
 			name: 'Generate text from the selected text',
 			editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
@@ -478,7 +478,6 @@ export default class AICommanderPlugin extends Plugin {
             command = command.trim();
             if (command == null || command == undefined || command.length < 1) continue;
             const cid = command.toLowerCase().replace(/ /g, '-');
-            console.log(cid);
             this.addCommand({
                 id: cid,
                 name: command,
@@ -495,7 +494,6 @@ export default class AICommanderPlugin extends Plugin {
             command = command.trim();
             if (command == null || command == undefined || command.length < 1) continue;
             const cid = command.toLowerCase().replace(/ /g, '-');
-            console.log(cid);
             this.addCommand({
                 id: cid,
                 name: command,
