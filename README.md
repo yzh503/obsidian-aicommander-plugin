@@ -14,7 +14,7 @@
 - Generate text in conjunction with search engine results. This allows the text model to work with Bing search engine. A [Bing Web Search API](https://www.microsoft.com/en-us/bing/apis/bing-web-search-api) key is required to use this feature.  
 - Generate text in context of the **PDF** attachment embedded in the note. In this mode, it will not incorporate the search result.
 - Use [Prompt Perfect](https://promptperfect.jina.ai/) to automatically improve prompts. Your prompts will be replaced by the improved one.
-- Custom prompt commands for selected text and PDF. For example, add a command "Summarise the text" in the plugin settings, and it will appear as a command. Note that you need to **reload** the plugin by disabling and re-enabling it after changing the Custom Commands setting.
+- Custom prompt commands for selected text and PDF. For example, add a command "Summarise the text" in the plugin settings, and it will appear as a command. **Note that you need to reload the plugin and restart Obsidian to update the command palette**.
 
 ## Supported models
 
