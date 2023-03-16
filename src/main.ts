@@ -1,9 +1,9 @@
-import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder} from 'obsidian';
+import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder, RequestUrlParam } from 'obsidian';
 import { PromptModal } from "./modal";
 import { Configuration, OpenAIApi, CreateImageRequestSizeEnum, ChatCompletionRequestMessage } from "openai";
 
 interface AICommanderPluginSettings {
-	model: string;
+    model: string;
     apiKey: string;
     imgSize: string;
     saveImg: string;
@@ -17,7 +17,7 @@ interface AICommanderPluginSettings {
 }
 
 const DEFAULT_SETTINGS: AICommanderPluginSettings = {
-	model: 'gpt-3.5-turbo',
+    model: 'gpt-3.5-turbo',
     apiKey: '',
     imgSize: '256x256',
     saveImg: 'attachment',
@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS: AICommanderPluginSettings = {
 }
 
 export default class AICommanderPlugin extends Plugin {
-	settings: AICommanderPluginSettings;
+    settings: AICommanderPluginSettings;
 
     async improvePrompt(prompt: string, targetModel: string) {
 
@@ -53,13 +53,13 @@ export default class AICommanderPlugin extends Plugin {
         }
 
         const response = await requestUrl(params);
-  
+
         if ('promptOptimized' in response.json.result) return response.json.result.promptOptimized as string;
         else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
     }
 
     async generateText(prompt: string, contextPrompt?: string) {
-        if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
+        if (prompt.length < 1) throw new Error('Cannot find prompt.');
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const configuration = new Configuration({ apiKey: this.settings.apiKey });
@@ -72,7 +72,7 @@ export default class AICommanderPlugin extends Plugin {
         }
 
         const messages = [];
-        
+
         if (contextPrompt) {
             messages.push({
                 role: 'system',
@@ -85,10 +85,10 @@ export default class AICommanderPlugin extends Plugin {
                 role: 'system',
                 content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API JSON response into your answers when responding to questions. Your response should include the relevant information from the JSON and provide attribution by mentioning the source of information with its url in the format of markdown. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult)
             });
-        } 
+        }
 
         messages.push({
-            role: 'user', 
+            role: 'user',
             content: newPrompt
         });
 
@@ -97,17 +97,15 @@ export default class AICommanderPlugin extends Plugin {
             messages: messages as ChatCompletionRequestMessage[],
         };
 
-        console.log('Completion request: ', data);
-
         const completion = await openai.createChatCompletion(data)
 
         const message = completion.data.choices[0].message
         if (!message) throw new Error('No response from OpenAI API');
         const content = message.content;
 
-        return({
+        return ({
             text: content,
-            prompt: prompt 
+            prompt: prompt
         });
     }
 
@@ -117,7 +115,7 @@ export default class AICommanderPlugin extends Plugin {
     }
 
     async generateImage(prompt: string) {
-        if (prompt.length < 1 ) throw new Error('Cannot find prompt.');
+        if (prompt.length < 1) throw new Error('Cannot find prompt.');
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
         const configuration = new Configuration({
@@ -130,7 +128,7 @@ export default class AICommanderPlugin extends Plugin {
         if (this.settings.usePromptPerfect) {
             newPrompt = await this.improvePrompt(prompt, 'dalle');
         }
-        
+
         const response = await openai.createImage({
             prompt: newPrompt,
             n: 1,
@@ -150,29 +148,29 @@ export default class AICommanderPlugin extends Plugin {
 
             const path = dir.trim() + '/' + this.generateRandomString(20) + '.png';
             return path.replace(/\/\//g, '/');
-        }); 
+        });
         const base64 = response.data.data[0].b64_json as string;
         const buffer = Buffer.from(base64, 'base64');
-        
+
 
         const fileDir = filepath.split('/')
         if (fileDir.length > 1) {
             fileDir.pop();
             const dirPath = fileDir.join('/');
             const exists = this.app.vault.getAbstractFileByPath(dirPath) instanceof TFolder;
-            if(!exists) await this.app.vault.createFolder(dirPath);
+            if (!exists) await this.app.vault.createFolder(dirPath);
         }
 
         await this.app.vault.createBinary(filepath, buffer);
 
         if (this.settings.saveImg == 'attachment') {
-            return({
-                prompt: prompt, 
+            return ({
+                prompt: prompt,
                 text: `![${size}](${encodeURI(filepath)})\n`
             });
         } else {
-            return({
-                prompt: prompt, 
+            return ({
+                prompt: prompt,
                 text: `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`
             });
         }
@@ -181,24 +179,28 @@ export default class AICommanderPlugin extends Plugin {
     async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
         if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
 
-        const baseUrl = 'https://api.openai.com/v1/audio/transcriptions';
-        const blob = new Blob([audioBuffer]);
-        const formData = new FormData();
-        formData.append('file', blob, 'audio.' + filetype);
-        formData.append('model', 'whisper-1');
+        // Reference: www.stackoverflow.com/questions/74276173/how-to-send-multipart-form-data-payload-with-typescript-obsidian-library
+        const N = 16 // The length of our random boundry string
+        const randomBoundryString = 'WebKitFormBoundary' + Array(N + 1).join((Math.random().toString(36) + '00000000000000000').slice(2, 18)).slice(0, N)
+        const pre_string = `------${randomBoundryString}\r\nContent-Disposition: form-data; name="file"; filename="audio.mp3"\r\nContent-Type: "application/octet-stream"\r\n\r\n`;
+        const post_string = `\r\n------${randomBoundryString}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n------${randomBoundryString}--\r\n`
+        const pre_string_encoded = new TextEncoder().encode(pre_string);
+        const post_string_encoded = new TextEncoder().encode(post_string);
+        const concatenated = await new Blob([pre_string_encoded, audioBuffer, post_string_encoded]).arrayBuffer()
 
-        const params = {
-            url: baseUrl,
+        const options: RequestUrlParam = {
+            url: 'https://api.openai.com/v1/audio/transcriptions',
             method: 'POST',
-            contentType: 'multipart/form-data',
-            body: JSON.stringify(formData),
+            contentType: `multipart/form-data; boundary=----${randomBoundryString}`,
             headers: {
                 'Authorization': 'Bearer ' + this.settings.apiKey
-            }
-        }
+            },
+            body: concatenated
+        };
 
-        const text = await requestUrl(params).text;
-        return text;
+        const response = await requestUrl(options).catch((error) => { console.log(error.message); throw error; });
+        if ('text' in response.json) return response.json.text;
+        else throw new Error('No transcript received: ' + JSON.stringify(response.json));
     }
 
     async searchText(prompt: string) {
@@ -208,7 +210,7 @@ export default class AICommanderPlugin extends Plugin {
             method: 'GET',
             contentType: 'application/json',
             body: JSON.stringify({
-                q: prompt, 
+                q: prompt,
                 count: 20
             }),
             headers: {
@@ -218,12 +220,12 @@ export default class AICommanderPlugin extends Plugin {
         const response = await requestUrl(params);
         if ('webPages' in response.json && 'value' in response.json.webPages) return response.json.webPages.value;
         else throw new Error('No web search results: ' + JSON.stringify(response.json));
-    } 
+    }
 
     async getAttachmentDir() {
         const activeFile = this.app.workspace.getActiveFile();
         if (!activeFile) throw new Error('No active file');
-        const dir = this.app.vault.getAvaiablePathForAttachments(activeFile.basename, activeFile?.extension, activeFile );
+        const dir = this.app.vault.getAvailablePathForAttachments(activeFile.basename, activeFile?.extension, activeFile);  // getAvailablePathForAttachments is undocumented
         return dir;
     }
 
@@ -244,22 +246,15 @@ export default class AICommanderPlugin extends Plugin {
                 while ((result = reg.exec(text)) !== null) {
                     filename = normalizePath(decodeURI(result[0])).trim();
                 }
-            }   
+            }
 
             if (filename == '') throw new Error('No file found in the text.');
-            
-            const currentPathString = this.getCurrentPath();
 
-            console.log('currentPathString', currentPathString);
-            console.log('attachmentPath', attachmentPath);
-            console.log('filename', filename);
-            
+            const currentPathString = this.getCurrentPath();
             const underRootFolder = attachmentPath === '' || attachmentPath === '/';
             const underCurrentFolder = attachmentPath.startsWith('./');
             const underSpecificFolder = !underCurrentFolder && !underRootFolder;
             const fileInSpecificFolder = filename.contains('/');
-
-            console.log(underRootFolder, underCurrentFolder, underSpecificFolder, fileInSpecificFolder);
 
             let filepath = '';
 
@@ -311,11 +306,11 @@ export default class AICommanderPlugin extends Plugin {
         const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
         const charactersLength = characters.length;
         let result = '';
-      
+
         for (let i = 0; i < length; i++) {
-          result += characters.charAt(Math.floor(Math.random() * charactersLength));
+            result += characters.charAt(Math.floor(Math.random() * charactersLength));
         }
-      
+
         return result;
     }
 
@@ -338,7 +333,7 @@ export default class AICommanderPlugin extends Plugin {
 
     commandGenerateText(editor: Editor, prompt: string) {
         const lineToInsert = this.getNextEmptyLine(editor);
-        new Notice("Generating text...");  
+        new Notice("Generating text...");
         this.generateText(prompt).then((data) => {
             this.processGeneratedText(editor, data, lineToInsert);
         }).catch(error => {
@@ -350,12 +345,12 @@ export default class AICommanderPlugin extends Plugin {
     commandGenerateTextWithPdf(editor: Editor, prompt: string) {
         const lineToInsert = this.getNextEmptyLine(editor);
         const position = editor.getCursor();
-        const text = editor.getRange({line: 0, ch: 0}, position);
-        const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g, 
+        const text = editor.getRange({ line: 0, ch: 0 }, position);
+        const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g,
             /(?<=\[\[)(([^[\]])+)\.pdf(?=]])/g];
         this.findFilePath(text, regex).then((path) => {
             console.log('path', path);
-            new Notice(`Generating text in context of ${path}...`);  
+            new Notice(`Generating text in context of ${path}...`);
             this.generateTextWithPdf(prompt, path).then((data) => {
                 this.processGeneratedText(editor, data, lineToInsert);
             }).catch(error => {
@@ -370,7 +365,7 @@ export default class AICommanderPlugin extends Plugin {
 
     commandGenerateImage(editor: Editor, prompt: string) {
         const lineToInsert = this.getNextEmptyLine(editor);
-        new Notice("Generating image...");  
+        new Notice("Generating image...");
         this.generateImage(prompt).then((data) => {
             new Notice('Image Generated.');
             this.processGeneratedText(editor, data, lineToInsert);
@@ -383,8 +378,8 @@ export default class AICommanderPlugin extends Plugin {
     commandGenerateTranscript(editor: Editor) {
         const position = editor.getCursor();
         const line = editor.getLine(position.line)
-        const text = editor.getRange({line: 0, ch: 0}, position);
-        const regex = [/(?<=\[\[)(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=]])/g, 
+        const text = editor.getRange({ line: 0, ch: 0 }, position);
+        const regex = [/(?<=\[\[)(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=]])/g,
             /(?<=\[(.*)]\()(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=\))/g];
         this.findFilePath(text, regex).then((path) => {
             const fileType = path.split('.').pop();
@@ -395,7 +390,7 @@ export default class AICommanderPlugin extends Plugin {
                     console.log('Audio filepath', path);
                     if (!exists) throw new Error(path + ' does not exist');
                     this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
-                        new Notice("Generating transcript...");  
+                        new Notice("Generating transcript...");
                         this.generateTranscript(audioBuffer, fileType).then((result) => {
                             new Notice('Transcript Generated.');
                             editor.setLine(position.line, `${line}${result}\n`);
@@ -415,107 +410,107 @@ export default class AICommanderPlugin extends Plugin {
         });
     }
 
-	async onload() {
-		await this.loadSettings();
+    async onload() {
+        await this.loadSettings();
 
-		this.addCommand({
-			id: 'text-prompt',
-			name: 'Generate text from prompt',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				const onSubmit = (prompt: string) => {
+        this.addCommand({
+            id: 'text-prompt',
+            name: 'Generate text from prompt',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
+                const onSubmit = (prompt: string) => {
                     this.commandGenerateText(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'img-prompt',
-			name: 'Generate an image from prompt',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				const onSubmit = (prompt: string) => {
-                   this.commandGenerateImage(editor, prompt);
+            id: 'img-prompt',
+            name: 'Generate an image from prompt',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
+                const onSubmit = (prompt: string) => {
+                    this.commandGenerateImage(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'text-line',
-			name: 'Generate text from the current line',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'text-line',
+            name: 'Generate text from the current line',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineContent = editor.getLine(position.line);
                 this.commandGenerateText(editor, lineContent);
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'img-line',
-			name: 'Generate an image from the current line',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'img-line',
+            name: 'Generate an image from the current line',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineContent = editor.getLine(position.line);
                 this.commandGenerateImage(editor, lineContent);
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'text-selected',
-			name: 'Generate text from the selected text',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'text-selected',
+            name: 'Generate text from the selected text',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
                 this.commandGenerateText(editor, selectedText);
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'img-selected',
-			name: 'Generate an image from the selected text',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'img-selected',
+            name: 'Generate an image from the selected text',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
-                new Notice("Generating image...");  
+                new Notice("Generating image...");
                 this.commandGenerateImage(editor, selectedText);
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'audio-transcript',
-			name: 'Generate a transcript from the above audio',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'audio-transcript',
+            name: 'Generate a transcript from the above audio',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 this.commandGenerateTranscript(editor);
-			}  
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'pdf-prompt',
-			name: 'Generate text from prompt in context of the above PDF',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
-				const onSubmit = (prompt: string) => {
+            id: 'pdf-prompt',
+            name: 'Generate text from prompt in context of the above PDF',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
+                const onSubmit = (prompt: string) => {
                     this.commandGenerateTextWithPdf(editor, prompt);
                 };
                 new PromptModal(this.app, "", onSubmit).open();
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'pdf-line',
-			name: 'Generate text from the current line in context of the above PDF',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'pdf-line',
+            name: 'Generate text from the current line in context of the above PDF',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const position = editor.getCursor();
                 const lineCotent = editor.getLine(position.line)
                 this.commandGenerateTextWithPdf(editor, lineCotent);
-			}
-		});
+            }
+        });
 
         this.addCommand({
-			id: 'pdf-selected',
-			name: 'Generate text from the selected text in context of the above PDF',
-			editorCallback: (editor: Editor, view: MarkdownView) => {
+            id: 'pdf-selected',
+            name: 'Generate text from the selected text in context of the above PDF',
+            editorCallback: (editor: Editor, view: MarkdownView) => {
                 const selectedText = editor.getSelection();
                 this.commandGenerateTextWithPdf(editor, selectedText);
-			}
-		});
+            }
+        });
 
         const extraCommandsForSelected = this.settings.promptsForSelected.split('\n');
         for (let command of extraCommandsForSelected) {
@@ -546,63 +541,63 @@ export default class AICommanderPlugin extends Plugin {
                 }
             });
         }
-    
 
-		// This adds a settings tab so the user can configure various aspects of the plugin
-		this.addSettingTab(new ApiSettingTab(this.app, this));
 
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
-	}
+        // This adds a settings tab so the user can configure various aspects of the plugin
+        this.addSettingTab(new ApiSettingTab(this.app, this));
 
-	onunload() {
+        // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
+        this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+    }
 
-	}
+    onunload() {
 
-	async loadSettings() {
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-	}
+    }
 
-	async saveSettings() {
-		await this.saveData(this.settings);
-	}
+    async loadSettings() {
+        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+    }
+
+    async saveSettings() {
+        await this.saveData(this.settings);
+    }
 }
 
 class ApiSettingTab extends PluginSettingTab {
-	plugin: AICommanderPlugin;
+    plugin: AICommanderPlugin;
 
-	constructor(app: App, plugin: AICommanderPlugin) {
-		super(app, plugin);
-		this.plugin = plugin;
-	}
+    constructor(app: App, plugin: AICommanderPlugin) {
+        super(app, plugin);
+        this.plugin = plugin;
+    }
 
-	display(): void {
-		const {containerEl} = this;
-		containerEl.empty();
-        containerEl.createEl('h2', {text: 'OpenAI API'});
-        
-		new Setting(containerEl)
-			.setName('OpenAI API key')
+    display(): void {
+        const { containerEl } = this;
+        containerEl.empty();
+        containerEl.createEl('h2', { text: 'OpenAI API' });
+
+        new Setting(containerEl)
+            .setName('OpenAI API key')
             .setDesc('For use of OpenAI models')
-			.addText(text => text
-				.setPlaceholder('Enter your key')
-				.setValue(this.plugin.settings.apiKey)
-				.onChange(async (value) => {
-					this.plugin.settings.apiKey = value;
-					await this.plugin.saveSettings();
-				}));
-        
+            .addText(text => text
+                .setPlaceholder('Enter your key')
+                .setValue(this.plugin.settings.apiKey)
+                .onChange(async (value) => {
+                    this.plugin.settings.apiKey = value;
+                    await this.plugin.saveSettings();
+                }));
+
         new Setting(containerEl)
             .setName('Text Model')
             .setDesc('Select the model to use for text generation')
             .addDropdown(dropdown => dropdown
                 .addOption('gpt-3.5-turbo', 'gpt-3.5-turbo')
                 .setValue(this.plugin.settings.model)
-				.onChange(async (value) => {
-					this.plugin.settings.model = value;
-					await this.plugin.saveSettings();
-				}));
-        
+                .onChange(async (value) => {
+                    this.plugin.settings.model = value;
+                    await this.plugin.saveSettings();
+                }));
+
         new Setting(containerEl)
             .setName('Image Size')
             .setDesc('Size of the image to generate')
@@ -611,11 +606,11 @@ class ApiSettingTab extends PluginSettingTab {
                 .addOption('512x512', '512x512')
                 .addOption('1024x1024', '1024x1024')
                 .setValue(this.plugin.settings.imgSize)
-				.onChange(async (value) => {
-					this.plugin.settings.imgSize = value;
-					await this.plugin.saveSettings();
-				}));
-        
+                .onChange(async (value) => {
+                    this.plugin.settings.imgSize = value;
+                    await this.plugin.saveSettings();
+                }));
+
         new Setting(containerEl)
             .setName('Image Format')
             .setDesc('Select how you want to save the image')
@@ -623,13 +618,13 @@ class ApiSettingTab extends PluginSettingTab {
                 .addOption('base64', 'base64')
                 .addOption('attachment', 'attachment')
                 .setValue(this.plugin.settings.saveImg)
-				.onChange(async (value) => {
-					this.plugin.settings.saveImg = value;
-					await this.plugin.saveSettings();
-				}));
-        
-        containerEl.createEl('h2', {text: 'Search Engine'});
-        
+                .onChange(async (value) => {
+                    this.plugin.settings.saveImg = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        containerEl.createEl('h2', { text: 'Search Engine' });
+
         new Setting(containerEl)
             .setName('Use search engine')
             .setDesc("Use text generator with search engine")
@@ -652,17 +647,17 @@ class ApiSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-			.setName('Bing Web Search API key')
+            .setName('Bing Web Search API key')
             .setDesc("Find in 'manage keys' in Azure portal")
-			.addText(text => text
-				.setPlaceholder('Enter your key')
-				.setValue(this.plugin.settings.bingSearchKey)
-				.onChange(async (value) => {
-					this.plugin.settings.bingSearchKey = value;
-					await this.plugin.saveSettings();
-				}));
-        
-        containerEl.createEl('h2', {text: 'Prompt Perfect'});
+            .addText(text => text
+                .setPlaceholder('Enter your key')
+                .setValue(this.plugin.settings.bingSearchKey)
+                .onChange(async (value) => {
+                    this.plugin.settings.bingSearchKey = value;
+                    await this.plugin.saveSettings();
+                }));
+
+        containerEl.createEl('h2', { text: 'Prompt Perfect' });
 
         new Setting(containerEl)
             .setName('Use Prompt Perfect')
@@ -672,43 +667,43 @@ class ApiSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.usePromptPerfect = value;
                     await this.plugin.saveSettings();
-            }));
-        
-        
+                }));
+
+
         new Setting(containerEl)
-			.setName('Prompt Perfect API key')
+            .setName('Prompt Perfect API key')
             .setDesc("Find in Prompt Perfect settings")
-			.addText(text => text
-				.setPlaceholder('Enter your key')
-				.setValue(this.plugin.settings.promptPerfectKey)
-				.onChange(async (value) => {
-					this.plugin.settings.promptPerfectKey = value;
-					await this.plugin.saveSettings();
-				}));
+            .addText(text => text
+                .setPlaceholder('Enter your key')
+                .setValue(this.plugin.settings.promptPerfectKey)
+                .onChange(async (value) => {
+                    this.plugin.settings.promptPerfectKey = value;
+                    await this.plugin.saveSettings();
+                }));
 
-        containerEl.createEl('h2', {text: 'Custom Commands'}); 
-        containerEl.createEl('p', {text: 'Reload the plugin after changing below settings'}); 
+        containerEl.createEl('h2', { text: 'Custom Commands' });
+        containerEl.createEl('p', { text: 'Reload the plugin after changing below settings' });
 
         new Setting(containerEl)
-			.setName('Custom command for selected text')
+            .setName('Custom command for selected text')
             .setDesc('Fill in your prompts line by line. They will appear as commands.')
-			.addTextArea(text => text
-				.setPlaceholder('Summarise the text\nTranslate into English')
-				.setValue(this.plugin.settings.promptsForSelected)
-				.onChange(async (value) => {
-					this.plugin.settings.promptsForSelected = value;
-					await this.plugin.saveSettings();
-				}));
-        
+            .addTextArea(text => text
+                .setPlaceholder('Summarise the text\nTranslate into English')
+                .setValue(this.plugin.settings.promptsForSelected)
+                .onChange(async (value) => {
+                    this.plugin.settings.promptsForSelected = value;
+                    await this.plugin.saveSettings();
+                }));
+
         new Setting(containerEl)
-			.setName('Custom command for PDF')
+            .setName('Custom command for PDF')
             .setDesc('Fill in your prompts line by line. They will appear as commands.')
-			.addTextArea(text => text
-				.setPlaceholder('Summarise the PDF')
-				.setValue(this.plugin.settings.promptsForPdf)
-				.onChange(async (value) => {
-					this.plugin.settings.promptsForPdf = value;
-					await this.plugin.saveSettings();
-				}));
-	}
+            .addTextArea(text => text
+                .setPlaceholder('Summarise the PDF')
+                .setValue(this.plugin.settings.promptsForPdf)
+                .onChange(async (value) => {
+                    this.plugin.settings.promptsForPdf = value;
+                    await this.plugin.saveSettings();
+                }));
+    }
 }

@@ -22,7 +22,6 @@
 		"typescript": "4.7.4"
 	},
 	"dependencies": {
-		"@fern-api/openai": "^0.0.23",
 		"openai": "^3.2.1"
 	}
 }
