@@ -75,15 +75,15 @@ export default class AICommanderPlugin extends Plugin {
 
         if (contextPrompt) {
             messages.push({
-                role: 'system',
+                role: 'user',
                 content: contextPrompt
             });
         } else if (this.settings.useSearchEngine) {
             if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
             const searchResult = await this.searchText(prompt)
             messages.push({
-                role: 'system',
-                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API JSON response into your answers when responding to questions. Your response should include the relevant information from the JSON and provide attribution by mentioning the source of information with its url in the format of markdown. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult)
+                role: 'user',
+                content: 'As an assistant who can answer questions using information from web search results, your task is to incorporate information from a web search results into your answers when responding to questions. Your response should include the relevant information from the search result and provide attribution by mentioning the source of information with its url in the format of markdown. Here are the web search results: \n\n ' + JSON.stringify(searchResult)
             });
         }
 
@@ -97,7 +97,9 @@ export default class AICommanderPlugin extends Plugin {
             messages: messages as ChatCompletionRequestMessage[],
         };
 
-        const completion = await openai.createChatCompletion(data)
+        console.log(data);
+
+        const completion = await openai.createChatCompletion(data).catch((error) => {throw new Error(error.message)});
 
         const message = completion.data.choices[0].message
         if (!message) throw new Error('No response from OpenAI API');
@@ -203,16 +205,12 @@ export default class AICommanderPlugin extends Plugin {
         else throw new Error('No transcript received: ' + JSON.stringify(response.json));
     }
 
-    async searchText(prompt: string) {
+    async searchText(query: string) {
 
         const params = {
-            url: 'https://api.bing.microsoft.com/v7.0/search',
+            url: 'https://api.bing.microsoft.com/v7.0/search?q=' +  encodeURIComponent(query),
             method: 'GET',
             contentType: 'application/json',
-            body: JSON.stringify({
-                q: prompt,
-                count: 20
-            }),
             headers: {
                 'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey
             }
@@ -353,9 +351,6 @@ export default class AICommanderPlugin extends Plugin {
             new Notice(`Generating text in context of ${path}...`);
             this.generateTextWithPdf(prompt, path).then((data) => {
                 this.processGeneratedText(editor, data, lineToInsert);
-            }).catch(error => {
-                console.log(error.message);
-                new Notice(error.message);
             });
         }).catch(error => {
             console.log(error.message);
@@ -395,13 +390,7 @@ export default class AICommanderPlugin extends Plugin {
                             new Notice('Transcript Generated.');
                             editor.setLine(position.line, `${line}${result}\n`);
                         });
-                    }).catch(error => {
-                        console.log(error.message);
-                        new Notice(error.message);
                     });
-                }).catch(error => {
-                    console.log(error.message);
-                    new Notice(error.message);
                 });
             }
         }).catch(error => {
