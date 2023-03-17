@@ -32,6 +32,7 @@ const DEFAULT_SETTINGS: AICommanderPluginSettings = {
 
 export default class AICommanderPlugin extends Plugin {
     settings: AICommanderPluginSettings;
+    writing: boolean;
 
     async improvePrompt(prompt: string, targetModel: string) {
 
@@ -105,7 +106,6 @@ export default class AICommanderPlugin extends Plugin {
             },
         });
 
-        // Read chunks from the response stream
         const reader = response.body?.getReader();
         if (!reader) {
             throw new Error('No response body reader available');
@@ -153,7 +153,7 @@ export default class AICommanderPlugin extends Plugin {
     getNextNewLine(editor: Editor, Ln: number) {
         let newLine = Ln;
         while (editor.getLine(newLine).trim().length > 0) {
-            if (newLine == editor.lastLine()) editor.setLine(newLine, '\n');
+            if (newLine == editor.lastLine()) editor.setLine(newLine, editor.getLine(newLine) + '\n');
             newLine++;
         }
         return newLine;
@@ -360,16 +360,21 @@ export default class AICommanderPlugin extends Plugin {
         return this.generateText(prompt, editor, currentLn, context);
     }
 
-
-
     commandGenerateText(editor: Editor, prompt: string) {
         const currentLn = editor.getCursor('to').line;
+        if (this.writing) {
+            new Notice('Generator is already in progress.');
+            return;
+        }
+        this.writing = true;
         new Notice("Generating text...");
         this.generateText(prompt, editor, currentLn).then((text) => {
             new Notice("Text completed.");
+            this.writing = false;
         }).catch(error => {
             console.log(error.message);
             new Notice(error.message);
+            this.writing = false;
         });
     }
 
@@ -380,9 +385,16 @@ export default class AICommanderPlugin extends Plugin {
         const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g,
             /(?<=\[\[)(([^[\]])+)\.pdf(?=]])/g];
         this.findFilePath(text, regex).then((path) => {
+            if (this.writing) throw new Error('Generator is already in progress.');
+            this.writing = true;
             new Notice(`Generating text in context of ${path}...`);
             this.generateTextWithPdf(prompt, editor, currentLn, path).then((text) => {
                 new Notice("Text completed.");
+                this.writing = false;
+            }).catch(error => {
+                console.log(error.message);
+                new Notice(error.message);
+                this.writing = false;
             });
         }).catch(error => {
             console.log(error.message);
@@ -392,13 +404,20 @@ export default class AICommanderPlugin extends Plugin {
 
     commandGenerateImage(editor: Editor, prompt: string) {
         const currentLn = editor.getCursor('to').line;
+        if (this.writing) {
+            new Notice('Generator is already in progress.');
+            return;
+        }
+        this.writing = true;
         new Notice("Generating image...");
         this.generateImage(prompt).then((text) => {
             this.writeText(editor, currentLn, text);
             new Notice('Image Generated.');
+            this.writing = false;
         }).catch(error => {
             console.log(error.message);
             new Notice(error.message);
+            this.writing = false;
         });
     }
 
@@ -415,10 +434,20 @@ export default class AICommanderPlugin extends Plugin {
                 this.app.vault.adapter.exists(path).then((exists) => {
                     if (!exists) throw new Error(path + ' does not exist');
                     this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
+                        if (this.writing) {
+                            new Notice('Generator is already in progress.');
+                            return;
+                        }
+                        this.writing = true;
                         new Notice("Generating transcript...");
                         this.generateTranscript(audioBuffer, fileType).then((result) => {
                             this.writeText(editor, position.line, result);
                             new Notice('Transcript Generated.');
+                            this.writing = false;
+                        }).catch(error => {
+                            console.log(error.message);
+                            new Notice(error.message);
+                            this.writing = false;
                         });
                     });
                 });
@@ -431,6 +460,7 @@ export default class AICommanderPlugin extends Plugin {
 
     async onload() {
         await this.loadSettings();
+        this.writing = false;
 
         this.addCommand({
             id: 'text-prompt',
