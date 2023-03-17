@@ -129,7 +129,7 @@ export default class AICommanderPlugin extends Plugin {
                 if (datum.startsWith('data:')) {
                     const json = JSON.parse(datum.substring(6));
                     if ('error' in json) throw new Error('Error: ' + json.error.message);
-                    if (!('choices' in json))  throw new Error('Error: ' + JSON.stringify(json));
+                    if (!('choices' in json)) throw new Error('Error: ' + JSON.stringify(json));
                     if ('content' in json.choices[0].delta) {
                         const text = json.choices[0].delta.content;
                         if (buffer.length < 1) buffer += text.trim();
@@ -268,7 +268,7 @@ export default class AICommanderPlugin extends Plugin {
     async searchText(query: string) {
 
         const params = {
-            url: 'https://api.bing.microsoft.com/v7.0/search?q=' +  encodeURIComponent(query),
+            url: 'https://api.bing.microsoft.com/v7.0/search?q=' + encodeURIComponent(query),
             method: 'GET',
             contentType: 'application/json',
             headers: {
@@ -312,7 +312,7 @@ export default class AICommanderPlugin extends Plugin {
             const AttInRootFolder = attachmentPath === '' || attachmentPath === '/';
             const AttInCurrentFolder = attachmentPath.startsWith('./');
             const AttInSpecificFolder = !AttInRootFolder && !AttInCurrentFolder;
-   
+
             let fullPath = '';
 
             if (AttInRootFolder || fileInSpecificFolder) fullPath = filename;
