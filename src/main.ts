@@ -109,7 +109,7 @@ export default class AICommanderPlugin extends Plugin {
         if (!response.ok) {
             const errorResponse = await response.json();
             const errorMessage = errorResponse && errorResponse.error.message ? errorResponse.error.message : response.statusText;
-            throw new Error(`HTTP error! status: ${response.status}, message: ${errorMessage}`);
+            throw new Error(`Error. ${errorMessage}`);
         }
 
         const reader = response.body?.getReader();
@@ -275,7 +275,10 @@ export default class AICommanderPlugin extends Plugin {
             body: concatenated
         };
         
-        const response = await requestUrl(options).catch((error) => { console.log(error.message); throw error; });
+        const response = await requestUrl(options).catch((error) => { 
+            if (error.message.includes('401')) throw new Error('OpenAI API Key is not valid.');
+            else throw error; 
+        });
         if ('text' in response.json) return response.json.text;
         else throw new Error('Error. ' + JSON.stringify(response.json));
     }
@@ -290,7 +293,12 @@ export default class AICommanderPlugin extends Plugin {
                 'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey
             }
         };
-        const response = await requestUrl(params);
+
+        const response = await requestUrl(params).catch((error) => { 
+            if (error.message.includes('401')) throw new Error('Bing Web Search API Key is not valid.');
+            else throw error; 
+        });
+
         if ('webPages' in response.json && 'value' in response.json.webPages) return response.json.webPages.value;
         else throw new Error('No web search results: ' + JSON.stringify(response.json));
     }
