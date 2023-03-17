@@ -81,7 +81,7 @@ export default class AICommanderPlugin extends Plugin {
             const searchResult = await this.searchText(prompt);
             messages.push({
                 role: 'system',
-                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search API JSON response into your answers when responding to questions. Your response should include the relevant information from the JSON and provide attribution by mentioning the source of information with its url in the format of markdown. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search API response in JSON format: \n\n ' + JSON.stringify(searchResult),
+                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result: \n\n ' + JSON.stringify(searchResult),
             });
         }
 
