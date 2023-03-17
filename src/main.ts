@@ -758,7 +758,7 @@ class ApiSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Custom command for selected text')
-            .setDesc('Fill in your prompts line by line. They will appear as commands.')
+            .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
             .addTextArea(text => text
                 .setPlaceholder('Summarise the text\nTranslate into English')
                 .setValue(this.plugin.settings.promptsForSelected)
@@ -769,7 +769,7 @@ class ApiSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName('Custom command for PDF')
-            .setDesc('Fill in your prompts line by line. They will appear as commands.')
+            .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
             .addTextArea(text => text
                 .setPlaceholder('Summarise the PDF')
                 .setValue(this.plugin.settings.promptsForPdf)
