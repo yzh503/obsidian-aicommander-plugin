@@ -105,6 +105,12 @@ export default class AICommanderPlugin extends Plugin {
                 'Authorization': 'Bearer ' + this.settings.apiKey,
             },
         });
+        
+        if (!response.ok) {
+            const errorResponse = await response.json();
+            const errorMessage = errorResponse && errorResponse.error.message ? errorResponse.error.message : response.statusText;
+            throw new Error(`HTTP error! status: ${response.status}, message: ${errorMessage}`);
+        }
 
         const reader = response.body?.getReader();
         if (!reader) {
@@ -190,7 +196,16 @@ export default class AICommanderPlugin extends Plugin {
             n: 1,
             size: this.settings.imgSize as CreateImageRequestSizeEnum,
             response_format: 'b64_json'
-        });
+        }).catch(error => {
+            if (error.response) {
+              throw new Error(`Error. ${error.response.data.error.message}`);
+            } else if (error.request) {
+                throw new Error(`No response received!`);
+            } else {
+                throw new Error(`Error! ${error.message}`);
+            }
+          }
+        );
 
         const size = this.settings.imgSize.split('x')[0];
 
@@ -259,10 +274,10 @@ export default class AICommanderPlugin extends Plugin {
             },
             body: concatenated
         };
-
+        
         const response = await requestUrl(options).catch((error) => { console.log(error.message); throw error; });
         if ('text' in response.json) return response.json.text;
-        else throw new Error('No transcript received: ' + JSON.stringify(response.json));
+        else throw new Error('Error. ' + JSON.stringify(response.json));
     }
 
     async searchText(query: string) {
