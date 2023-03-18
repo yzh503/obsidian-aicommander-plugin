@@ -4,6 +4,8 @@
 
 **AI Commander** is a simple AI connector that helps you write notes with the power of OpenAI APIs in conjunction with Bing search engine.
 
+![Demo](demo.gif) 
+
 [OpenAI API key](https://platform.openai.com/account/api-keys) is required to use this plugin.
 
 ## Current Features
