@@ -91,7 +91,7 @@ export default class AICommanderPlugin extends Plugin {
         });
 
         const body = JSON.stringify({
-            model: 'gpt-3.5-turbo',
+            model: this.settings.model,
             messages: messages,
             stream: true
         });
@@ -660,10 +660,10 @@ class ApiSettingTab extends PluginSettingTab {
                 }));
 
         new Setting(containerEl)
-            .setName('Text Model')
-            .setDesc('Select the model to use for text generation')
-            .addDropdown(dropdown => dropdown
-                .addOption('gpt-3.5-turbo', 'gpt-3.5-turbo')
+            .setName('Model')
+            .setDesc('Select the model to use for content generation')
+            .addText(text => text
+                .setPlaceholder('gpt-3.5-turbo')
                 .setValue(this.plugin.settings.model)
                 .onChange(async (value) => {
                     this.plugin.settings.model = value;
