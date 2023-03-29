@@ -20,9 +20,9 @@
 
 ## Supported models
 
-- OpenAI gpt-3.5-turbo
-- OpenAI Whisper
-- OpenAI image generation model
+- GPT models listed in https://platform.openai.com/docs/models/gpt-4
+- Whisper v1
+- DALL·E image generation model
 
 ## How to use
 
