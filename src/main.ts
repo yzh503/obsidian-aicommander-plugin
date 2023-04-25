@@ -73,14 +73,14 @@ export default class AICommanderPlugin extends Plugin {
 
         if (contextPrompt) {
             messages.push({
-                role: 'system',
+                role: 'user',
                 content: contextPrompt,
             });
         } else if (this.settings.useSearchEngine) {
             if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
             const searchResult = await this.searchText(prompt);
             messages.push({
-                role: 'system',
+                role: 'user',
                 content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result: \n\n ' + JSON.stringify(searchResult),
             });
         }
@@ -95,6 +95,8 @@ export default class AICommanderPlugin extends Plugin {
             messages: messages,
             stream: true
         });
+
+        console.log(body);
 
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -370,17 +372,28 @@ export default class AICommanderPlugin extends Plugin {
         const pdfBuffer = await this.app.vault.adapter.readBinary(filepath);
         const pdfjs = await loadPdfJs();
         const pdf = await pdfjs.getDocument(pdfBuffer).promise;
-        let totalContent = '';
 
+        const context = `As an assistant who can learn from text given to you, ` +
+        `your task is to incorporate information from text given to you into your ` +
+        `answers when responding to questions. Your response should include the ` +
+        `relevant information from the text given to you and provide attribution ` + 
+        `by mentioning the page number. Below is the content, ` +
+        `which is extracted from a PDF file:\n\n`;
+
+        let message = context;
+        
         for (let i = 0; i < pdf.numPages; i++) {
             const page = await pdf.getPage(i + 1);
             const content = await page.getTextContent();
-            const pageContent = content.items.map((item: any) => item.str).join(' ');
-            totalContent += `Page ${i + 1}: ` + pageContent.replace(/\s+/g, ' ') + '\n';
+            const pageContent = content.items
+                .map((item: any) => item.str)
+                .filter((str: string) => str !== '')
+                .join(' ')
+                .replace(/\s+/g, ' ');
+            message += `Page ${i + 1}: ` + pageContent + '\n';
         }
 
-        const context = `As an assistant who can learn from text given to you, your task is to incorporate information from text given to you into your answers when responding to questions. Your response should include the relevant information from the text given to you and provide attribution by mentioning the page number. Everything below is the text, which is extracted from a PDF file: \n\n${totalContent}`
-        return this.generateText(prompt, editor, currentLn, context);
+        return this.generateText(prompt, editor, currentLn, message)
     }
 
     commandGenerateText(editor: Editor, prompt: string) {
