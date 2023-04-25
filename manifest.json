@@ -1,9 +1,9 @@
 {
 	"id": "ai-commander",
 	"name": "AI Commander",
-	"version": "1.3.1",
+	"version": "1.3.2",
 	"minAppVersion": "1.0.0",
-	"description": "Generate audio transcripts, images, and text in context of PDF attachments or web search results using OpenAI and Bing API.",
+	"description": "Generate audio transcripts, images, and text in context of PDF attachments or web search results using OpenAI (ChatGPT) and Bing API.",
 	"author": "Simon Yang",
 	"authorUrl": "https://yzh503.github.io",
 	"fundingUrl": "https://www.buymeacoffee.com/yzh503",
