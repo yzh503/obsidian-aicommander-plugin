@@ -1,6 +1,7 @@
 import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder, RequestUrlParam, TAbstractFile } from 'obsidian';
 import { PromptModal } from "./modal";
 import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from "openai";
+import { unescape } from 'querystring';
 
 interface AICommanderPluginSettings {
     model: string;
@@ -29,6 +30,24 @@ const DEFAULT_SETTINGS: AICommanderPluginSettings = {
     promptsForSelected: '',
     promptsForPdf: ''
 }
+
+interface TokenLimits {
+    [key: string]: number;
+  }
+  
+  const TOKEN_LIMITS: TokenLimits = {
+      'gpt-3.5-turbo': 4096,
+      'gpt-3.5-turbo-0301':4096,
+      'text-davinci-003': 4097,
+      'text-davinci-002': 4097,
+      'code-davinci-002': 8001,
+      'code-davinci-001': 8001,
+      'gpt-4': 8192,
+      'gpt-4-0314': 8192,
+      'gpt-4-32k': 32768,
+      'gpt-4-32k-0314': 32768
+  }
+  
 
 export default class AICommanderPlugin extends Plugin {
     settings: AICommanderPluginSettings;
@@ -73,15 +92,14 @@ export default class AICommanderPlugin extends Plugin {
 
         if (contextPrompt) {
             messages.push({
-                role: 'user',
+                role: 'system',
                 content: contextPrompt,
             });
         } else if (this.settings.useSearchEngine) {
-            if (this.settings.bingSearchKey.length <= 1) throw new Error('Bing Search API Key is not provided.');
             const searchResult = await this.searchText(prompt);
             messages.push({
-                role: 'user',
-                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result: \n\n ' + JSON.stringify(searchResult),
+                role: 'system',
+                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from your knowledge and the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result: \n\n ' + JSON.stringify(searchResult),
             });
         }
 
@@ -95,8 +113,6 @@ export default class AICommanderPlugin extends Plugin {
             messages: messages,
             stream: true
         });
-
-        console.log(body);
 
         const response = await fetch('https://api.openai.com/v1/chat/completions', {
             method: 'POST',
@@ -285,8 +301,63 @@ export default class AICommanderPlugin extends Plugin {
         else throw new Error('Error. ' + JSON.stringify(response.json));
     }
 
-    async searchText(query: string) {
+    async htmlToMarkdown(html: string) {
+        const doc = new DOMParser().parseFromString(unescape(html), 'text/html');
+      
+        const body = doc.querySelector('main');
 
+        if (body == null) throw new Error('No search result.');
+
+        let markdown = body.innerHTML;
+        markdown = markdown.replace(/<h1>(.*?)<\/h1>/gi, '\n# $1\n');
+        markdown = markdown.replace(/<h2>(.*?)<\/h2>/gi, '\n## $1\n');
+        markdown = markdown.replace(/<h3>(.*?)<\/h3>/gi, '\n### $1\n');
+        markdown = markdown.replace(/<h4>(.*?)<\/h4>/gi, '\n#### $1\n');
+        markdown = markdown.replace(/<h5>(.*?)<\/h5>/gi, '\n##### $1\n');
+        markdown = markdown.replace(/<h6>(.*?)<\/h6>/gi, '\n###### $1\n');
+        markdown = markdown.replace(/<b>(.*?)<\/b>/gi, '**$1**');
+        markdown = markdown.replace(/<i>(.*?)<\/i>/gi, '_$1_');
+        markdown = markdown.replace(/<a href="(.*?)">(.*?)<\/a>/gi, '[$2]($1)');
+        markdown = markdown.replace(/<ul>(.*?)<\/ul>/gis, (match, p1) => {
+          const listItems = p1.split('</li>');
+          listItems.pop(); 
+          const markdownListItems = listItems.map((item: string) => {
+            const listItem = item.replace('<li>', '- ');
+            return listItem.trim();
+          });
+          return markdownListItems.join('\n') + '\n';
+        });
+        markdown = markdown.replace(/<p>(.*?)<\/p>/gis, '$1\n');
+        markdown = markdown.replace(/<br>/gi, '\n');
+        markdown = markdown.replace(/<hr>/gi, '---');
+        markdown = markdown.replace(/<\/?code>/gi, '`');
+        markdown = markdown.replace(/<.*?>/g, '').trim();
+        
+        let tokenLimit = 2048;
+        if (this.settings.model in TOKEN_LIMITS) tokenLimit = TOKEN_LIMITS[this.settings.model];
+
+        if (markdown.length > tokenLimit * 2) {
+            markdown = markdown.substring(0, tokenLimit * 2);
+        }
+
+        return markdown;
+      }
+      
+
+    async searchTextWithoutKey(query: string) {
+        const params = {
+            url: 'https://www.bing.com/search?q=' + encodeURIComponent(query),
+            method: 'GET'
+        };
+
+        const response = await requestUrl(params);
+        return this.htmlToMarkdown(response.text).then((markdown) => {
+            console.log(markdown)
+            return markdown;
+        });
+    }
+
+    async searchTextWithKey(query: string) {
         const params = {
             url: 'https://api.bing.microsoft.com/v7.0/search?q=' + encodeURIComponent(query),
             method: 'GET',
@@ -303,6 +374,14 @@ export default class AICommanderPlugin extends Plugin {
 
         if ('webPages' in response.json && 'value' in response.json.webPages) return response.json.webPages.value;
         else throw new Error('No web search results: ' + JSON.stringify(response.json));
+    }
+
+    async searchText(query: string) {
+        if (this.settings.bingSearchKey.length > 1) {
+            return this.searchTextWithKey(query);
+        } else {
+            return this.searchTextWithoutKey(query);
+        }
     }
 
     async getAttachmentDir() {
@@ -709,6 +788,7 @@ class ApiSettingTab extends PluginSettingTab {
                 }));
 
         containerEl.createEl('h2', { text: 'Search Engine' });
+        containerEl.createEl('p', { text: 'You may use Bing without an API key. Use an API key to achieve the best performance.' });
 
         new Setting(containerEl)
             .setName('Use search engine')
