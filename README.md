@@ -2,7 +2,7 @@
 
 <a href="https://www.buymeacoffee.com/yzh503" target="_blank"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" style="height: 40px !important;width: 150px !important;" ></a>
 
-**AI Commander** is a simple AI connector that helps you write notes with the power of OpenAI APIs in conjunction with Bing search engine.
+**AI Commander** is a simple AI connector that helps you write notes with the power of OpenAI (ChatGPT) APIs in conjunction with Bing search engine.
 
 ![Demo](demo.gif) 
 
