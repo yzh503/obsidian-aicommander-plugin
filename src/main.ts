@@ -55,7 +55,7 @@ export default class AICommanderPlugin extends Plugin {
     };
 
     const params = {
-      url: 'https://us-central1-prompt-ops.cloudfunctions.net/optimize',
+      url: 'https://api.promptperfect.jina.ai/optimize',
       method: 'POST',
       contentType: 'application/json',
       body: JSON.stringify(data),
@@ -63,12 +63,22 @@ export default class AICommanderPlugin extends Plugin {
         'x-api-key': `token ${this.settings.promptPerfectKey}`,
       },
     };
-
-    const response = await requestUrl(params);
-
-    if ('promptOptimized' in response.json.result)
-      return response.json.result.promptOptimized as string;
-    else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
+    try {
+      const response = await requestUrl(params);
+      const responseJson = response.json;
+      const errorMessage = responseJson?.error?.message || response.status;
+      if ('promptOptimized' in responseJson) {
+        return responseJson.promptOptimized as string;
+      } else {
+        throw new Error(errorMessage);
+      }
+    } catch(error) {
+      if (error.message.includes('401')) {
+        throw new Error('Prompt Perfect API Key is not valid.');
+      } else {
+        throw new Error('Prompt Perfect: ' + error.message);
+      }
+    }
   }
 
   async generateText(prompt: string, editor: Editor, currentLn: number, contextPrompt?: string) {
@@ -85,13 +95,10 @@ export default class AICommanderPlugin extends Plugin {
 
     // Optionally improve the prompt
     if (this.settings.usePromptPerfect) {
-      try {
-        finalPrompt = await this.improvePrompt(prompt, 'chatgpt');
-      } catch (error) {
-        console.error('Prompt improvement failed:', error);
-        // Proceed with the original prompt if improvement fails
-      }
+      finalPrompt = await this.improvePrompt(prompt, this.settings.model);
     }
+
+    console.log({finalPrompt})
 
     const messages: any[] = [];
 
