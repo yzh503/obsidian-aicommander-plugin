@@ -1,4 +1,4 @@
-import { App, Modal, Setting } from "obsidian";
+import { App, Modal } from "obsidian";
 
 export class PromptModal extends Modal {
   prompt: string;
@@ -7,34 +7,47 @@ export class PromptModal extends Modal {
 
   constructor(
     app: App,
-    defaultprompt: string,
+    defaultPrompt: string,
     onSubmit: (prompt: string) => void
   ) {
     super(app);
-    this.prompt = defaultprompt;
+    this.prompt = defaultPrompt;
     this.onSubmit = onSubmit;
   }
 
   onOpen() {
     const { contentEl } = this;
 
-    contentEl.createEl("h1", { text: "" });
+    // Add a title to the modal
+    contentEl.createEl("h2", { text: "Generate Text from Prompt" });
 
-    new Setting(contentEl).setName("Generate text from prompt").addText((text) =>
-      text.setValue(this.prompt).onChange((value) => {
-        this.prompt = value;
-      })
-    );
+    // Create a container for the textarea
+    const textareaContainer = contentEl.createDiv({ cls: "prompt-modal-textarea-container" });
 
-    new Setting(contentEl).addButton((btn) =>
-      btn
-        .setButtonText("Submit")
-        .setCta()
-        .onClick(() => {
-          this.close();
-          this.onSubmit(this.prompt);
-        })
-    );
+    // Create the textarea element
+    const textarea = textareaContainer.createEl("textarea", { cls: "prompt-modal-textarea" });
+    textarea.value = this.prompt;
+
+    textarea.addEventListener("input", () => {
+      this.prompt = textarea.value;
+    });
+
+    // Create a container for the buttons
+    const buttonContainer = contentEl.createDiv({ cls: "prompt-modal-button-container" });
+
+    // Create the submit button
+    const submitBtn = buttonContainer.createEl("button", { text: "Submit" });
+    submitBtn.addClass("mod-cta"); // Obsidian's standard call-to-action button styling
+    submitBtn.addEventListener("click", () => {
+      this.close();
+      this.onSubmit(this.prompt);
+    });
+
+    // Optionally, add a cancel button
+    const cancelBtn = buttonContainer.createEl("button", { text: "Cancel" });
+    cancelBtn.addEventListener("click", () => {
+      this.close();
+    });
   }
 
   onClose() {

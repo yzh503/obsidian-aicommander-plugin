@@ -1,874 +1,935 @@
-import { App, Editor, MarkdownView, normalizePath, Notice, Plugin, PluginSettingTab, Setting, loadPdfJs, requestUrl, arrayBufferToBase64, TFolder, RequestUrlParam, TAbstractFile } from 'obsidian';
-import { PromptModal } from "./modal";
-import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from "openai";
-import { unescape } from 'querystring';
+import {
+  App,
+  Editor,
+  MarkdownView,
+  Notice,
+  Plugin,
+  PluginSettingTab,
+  Setting,
+  loadPdfJs,
+  requestUrl,
+  arrayBufferToBase64,
+  TFolder,
+} from 'obsidian';
+import { PromptModal } from './modal';
+import { Configuration, OpenAIApi, CreateImageRequestSizeEnum } from 'openai';
 
 interface AICommanderPluginSettings {
-    model: string;
-    apiKey: string;
-    imgSize: string;
-    saveImg: string;
-    useSearchEngine: boolean;
-    searchEngine: string;
-    bingSearchKey: string;
-    usePromptPerfect: boolean;
-    promptPerfectKey: string;
-    promptsForSelected: string;
-    promptsForPdf: string;
+  model: string;
+  apiKey: string;
+  imgSize: string;
+  saveImg: string;
+  useSearchEngine: boolean;
+  searchEngine: string;
+  bingSearchKey: string;
+  usePromptPerfect: boolean;
+  promptPerfectKey: string;
+  promptsForSelected: string;
+  promptsForPdf: string;
 }
 
 const DEFAULT_SETTINGS: AICommanderPluginSettings = {
-    model: 'gpt-3.5-turbo',
-    apiKey: '',
-    imgSize: '256x256',
-    saveImg: 'attachment',
-    useSearchEngine: false,
-    searchEngine: 'bing',
-    bingSearchKey: '',
-    promptPerfectKey: '',
-    usePromptPerfect: false,
-    promptsForSelected: '',
-    promptsForPdf: ''
-}
-
-interface TokenLimits {
-    [key: string]: number;
-  }
-  
-  const TOKEN_LIMITS: TokenLimits = {
-      'gpt-3.5-turbo': 4096,
-      'gpt-3.5-turbo-0301':4096,
-      'text-davinci-003': 4097,
-      'text-davinci-002': 4097,
-      'code-davinci-002': 8001,
-      'code-davinci-001': 8001,
-      'gpt-4': 8192,
-      'gpt-4-0314': 8192,
-      'gpt-4-32k': 32768,
-      'gpt-4-32k-0314': 32768
-  }
-  
+  model: 'gpt-4o',
+  apiKey: '',
+  imgSize: '256x256',
+  saveImg: 'attachment',
+  useSearchEngine: false,
+  searchEngine: 'bing',
+  bingSearchKey: '',
+  promptPerfectKey: '',
+  usePromptPerfect: false,
+  promptsForSelected: '',
+  promptsForPdf: '',
+};
 
 export default class AICommanderPlugin extends Plugin {
-    settings: AICommanderPluginSettings;
-    writing: boolean;
+  settings: AICommanderPluginSettings;
+  writing: boolean;
 
-    async improvePrompt(prompt: string, targetModel: string) {
+  async improvePrompt(prompt: string, targetModel: string) {
+    const data = {
+      data: {
+        prompt: prompt,
+        targetModel: targetModel,
+      },
+    };
 
-        const data = {
-            data: {
-                prompt: prompt,
-                targetModel: targetModel
-            }
-        };
+    const params = {
+      url: 'https://us-central1-prompt-ops.cloudfunctions.net/optimize',
+      method: 'POST',
+      contentType: 'application/json',
+      body: JSON.stringify(data),
+      headers: {
+        'x-api-key': `token ${this.settings.promptPerfectKey}`,
+      },
+    };
 
-        const params = {
-            url: 'https://us-central1-prompt-ops.cloudfunctions.net/optimize',
-            method: 'POST',
-            contentType: 'application/json',
-            body: JSON.stringify(data),
-            headers: {
-                'x-api-key': `token ${this.settings.promptPerfectKey}`,
-            }
-        }
+    const response = await requestUrl(params);
 
-        const response = await requestUrl(params);
+    if ('promptOptimized' in response.json.result)
+      return response.json.result.promptOptimized as string;
+    else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
+  }
 
-        if ('promptOptimized' in response.json.result) return response.json.result.promptOptimized as string;
-        else throw new Error('Prompt Perfect API: ' + JSON.stringify(response.json));
+  async generateText(prompt: string, editor: Editor, currentLn: number, contextPrompt?: string) {
+    // Validate prompt and API key
+    if (!prompt || prompt.trim().length === 0) {
+      throw new Error('Prompt cannot be empty.');
     }
 
-    async generateText(prompt: string, editor: Editor, currentLn: number, contextPrompt?: string) {
-        if (prompt.length < 1) throw new Error('Cannot find prompt.');
-        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
+    if (!this.settings.apiKey || this.settings.apiKey.trim().length === 0) {
+      throw new Error('OpenAI API Key is not provided.');
+    }
 
-        let newPrompt = prompt;
+    let finalPrompt = prompt;
 
-        if (this.settings.usePromptPerfect) {
-            newPrompt = await this.improvePrompt(prompt, 'chatgpt');
-        }
+    // Optionally improve the prompt
+    if (this.settings.usePromptPerfect) {
+      try {
+        finalPrompt = await this.improvePrompt(prompt, 'chatgpt');
+      } catch (error) {
+        console.error('Prompt improvement failed:', error);
+        // Proceed with the original prompt if improvement fails
+      }
+    }
 
-        const messages = [];
+    const messages: any[] = [];
 
-        if (contextPrompt) {
-            messages.push({
-                role: 'system',
-                content: contextPrompt,
-            });
-        } else if (this.settings.useSearchEngine) {
-            const searchResult = await this.searchText(prompt);
-            messages.push({
-                role: 'system',
-                content: 'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from your knowledge and the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result: \n\n ' + JSON.stringify(searchResult),
-            });
-        }
-
+    // Add context or search results if needed
+    if (contextPrompt) {
+      messages.push({ role: 'system', content: contextPrompt });
+    } else if (this.settings.useSearchEngine) {
+      try {
+        const searchResult = await this.searchText(prompt);
         messages.push({
-            role: 'user',
-            content: newPrompt,
+          role: 'system',
+          content:
+            'As an assistant who can learn information from web search results, your task is to incorporate information from a web search result into your answers when responding to questions. Your response should include the relevant information from your knowledge and the web search result and provide the source markdown URL of the information. Please note that you should be able to handle various types of questions and search queries. Your response should also be clear and concise while incorporating all relevant information from the web search results. Here are the web search result:\n\n' +
+            JSON.stringify(searchResult),
         });
+      } catch (error) {
+        console.error('Search failed:', error);
+        // Proceed without search results if search fails
+      }
+    }
 
-        const body = JSON.stringify({
-            model: this.settings.model,
-            messages: messages,
-            stream: true
-        });
+    messages.push({ role: 'user', content: finalPrompt });
 
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
-            method: 'POST',
-            body: body,
-            headers: {
-                'Accept': 'text/event-stream',
-                'Content-Type': 'application/json',
-                'Authorization': 'Bearer ' + this.settings.apiKey,
-            },
-        });
-        
-        if (!response.ok) {
-            const errorResponse = await response.json();
-            const errorMessage = errorResponse && errorResponse.error.message ? errorResponse.error.message : response.statusText;
-            throw new Error(`Error. ${errorMessage}`);
+    // Prepare request body
+    const requestBody = {
+      model: this.settings.model,
+      messages: messages,
+      stream: true,
+    };
+
+    let response;
+    try {
+      response = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        body: JSON.stringify(requestBody),
+        headers: {
+          Accept: 'text/event-stream',
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer ' + this.settings.apiKey,
+        },
+      });
+
+      if (!response.ok) {
+        const errorResponse = await response.json();
+        const errorMessage = errorResponse?.error?.message || response.statusText;
+        throw new Error(`Error from OpenAI API: ${errorMessage}`);
+      }
+    } catch (error) {
+      console.error('API request failed:', error);
+      throw error;
+    }
+
+    const reader = response.body?.getReader();
+    if (!reader) {
+      throw new Error('No response body reader available');
+    }
+
+    let lnToWrite = this.getNextNewLine(editor, currentLn);
+    editor.replaceRange('\n', { line: lnToWrite, ch: 0 });
+    lnToWrite++;
+
+    const cursorPos = { line: lnToWrite, ch: 0 };
+    let accumulatedText = '';
+    const decoder = new TextDecoder('utf-8');
+    let isDone = false;
+
+    // Read and process streamed data
+    while (!isDone) {
+      const { value, done } = await reader.read();
+      if (done) break;
+
+      accumulatedText += decoder.decode(value, { stream: true });
+
+      let parsedIndex;
+      while ((parsedIndex = accumulatedText.indexOf('\n\n')) !== -1) {
+        const chunk = accumulatedText.slice(0, parsedIndex).trim();
+        accumulatedText = accumulatedText.slice(parsedIndex + 2);
+
+        if (chunk === 'data: [DONE]') {
+          isDone = true;
+          break;
         }
 
-        const reader = response.body?.getReader();
-        if (!reader) {
-            throw new Error('No response body reader available');
-        }
-
-        let LnToWrite = this.getNextNewLine(editor, currentLn);
-        editor.setLine(LnToWrite++, '\n');
-        let end = false;
-        let buffer = '';
-        while (!end) {
-            const { done, value } = await reader.read();
-            end = done;
-            const chunk = new TextDecoder().decode(value);
-            const data = chunk.split('\n');
-
-            for (const datum of data) {
-                if (datum.trim() === 'data: [DONE]') {
-                    end = true;
-                    break;
-                }
-                if (datum.startsWith('data:')) {
-                    const json = JSON.parse(datum.substring(6));
-                    if ('error' in json) throw new Error('Error: ' + json.error.message);
-                    if (!('choices' in json)) throw new Error('Error: ' + JSON.stringify(json));
-                    if ('content' in json.choices[0].delta) {
-                        const text = json.choices[0].delta.content;
-                        if (buffer.length < 1) buffer += text.trim();
-                        if (buffer.length > 0) {
-                            const lines = text.split('\n');
-                            if (lines.length > 1) {
-                                for (const word of lines) {
-                                    editor.setLine(LnToWrite, editor.getLine(LnToWrite++) + word + '\n');
-                                }
-                            } else {
-                                editor.setLine(LnToWrite, editor.getLine(LnToWrite) + text);
-                            }
-                        }
-                    }
-                }
+        if (chunk.startsWith('data:')) {
+          const jsonStr = chunk.substring('data:'.length).trim();
+          if (jsonStr) {
+            let json;
+            try {
+              json = JSON.parse(jsonStr);
+            } catch (e) {
+              console.error('JSON parse error:', e);
+              continue;
             }
-        }
-        editor.setLine(LnToWrite, editor.getLine(LnToWrite) + '\n');
-    }
 
-    getNextNewLine(editor: Editor, Ln: number) {
-        let newLine = Ln;
-        while (editor.getLine(newLine).trim().length > 0) {
-            if (newLine == editor.lastLine()) editor.setLine(newLine, editor.getLine(newLine) + '\n');
-            newLine++;
-        }
-        return newLine;
-    }
+            if (json.error) {
+              throw new Error('Error from OpenAI API: ' + json.error.message);
+            }
 
-    writeText(editor: Editor, LnToWrite: number, text: string) {
-        const newLine = this.getNextNewLine(editor, LnToWrite);
-        editor.setLine(newLine, '\n' + text.trim() + '\n');
-        return newLine;
-    }
+            const content = json.choices?.[0]?.delta?.content;
+            if (content) {
+              editor.replaceRange(content, cursorPos);
 
-    async getImageBase64(url: string) {
-        const buffer = await requestUrl(url).arrayBuffer;
-        return arrayBufferToBase64(buffer);
-    }
+              const contentLines = content.split('\n');
+              if (contentLines.length === 1) {
+                cursorPos.ch += contentLines[0].length;
+              } else {
+                cursorPos.line += contentLines.length - 1;
+                cursorPos.ch = contentLines[contentLines.length - 1].length;
+              }
 
-    async generateImage(prompt: string) {
-        if (prompt.length < 1) throw new Error('Cannot find prompt.');
-        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
-
-        const configuration = new Configuration({
-            apiKey: this.settings.apiKey,
-        });
-        const openai = new OpenAIApi(configuration);
-
-        let newPrompt = prompt;
-
-        if (this.settings.usePromptPerfect) {
-            newPrompt = await this.improvePrompt(prompt, 'dalle');
-        }
-
-        const response = await openai.createImage({
-            prompt: newPrompt,
-            n: 1,
-            size: this.settings.imgSize as CreateImageRequestSizeEnum,
-            response_format: 'b64_json'
-        }).catch(error => {
-            if (error.response) {
-              throw new Error(`Error. ${error.response.data.error.message}`);
-            } else if (error.request) {
-                throw new Error(`No response received!`);
-            } else {
-                throw new Error(`Error! ${error.message}`);
+              editor.setCursor(cursorPos);
+              editor.scrollIntoView({ from: cursorPos, to: cursorPos }, true);
             }
           }
-        );
-
-        const size = this.settings.imgSize.split('x')[0];
-
-        const currentPathString = this.getCurrentPath();
-
-        const filepath = await this.getAttachmentDir().then((attachmentPath) => {
-            let dir = ''
-            if (attachmentPath == '' || attachmentPath == '/') dir = '';
-            else if (attachmentPath.startsWith('./')) dir = currentPathString + '/' + attachmentPath.substring(2);
-            else dir = attachmentPath;
-
-            const path = dir.trim() + '/' + this.generateRandomString(20) + '.png';
-            return path.replace(/\/\//g, '/');
-        });
-        const base64 = response.data.data[0].b64_json as string;
-        const buffer = Buffer.from(base64, 'base64');
-
-
-        const fileDir = filepath.split('/')
-        if (fileDir.length > 1) {
-            fileDir.pop();
-            const dirPath = fileDir.join('/');
-            const exists = this.app.vault.getAbstractFileByPath(dirPath) instanceof TFolder;
-            if (!exists) await this.app.vault.createFolder(dirPath);
         }
-
-        await this.app.vault.createBinary(filepath, buffer);
-
-        if (this.settings.saveImg == 'attachment') {
-            return `![${size}](${encodeURI(filepath)})\n`;
-        } else {
-            return `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`;
-        }
-    }
-
-    generateRandomString(length: number): string {
-        const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-        const charactersLength = characters.length;
-        let result = '';
-
-        for (let i = 0; i < length; i++) {
-            result += characters.charAt(Math.floor(Math.random() * charactersLength));
-        }
-
-        return result;
-    }
-
-    async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
-        if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
-
-        // Reference: www.stackoverflow.com/questions/74276173/how-to-send-multipart-form-data-payload-with-typescript-obsidian-library
-        const N = 16 // The length of our random boundry string
-        const randomBoundryString = 'WebKitFormBoundary' + Array(N + 1).join((Math.random().toString(36) + '00000000000000000').slice(2, 18)).slice(0, N)
-        const pre_string = `------${randomBoundryString}\r\nContent-Disposition: form-data; name="file"; filename="audio.mp3"\r\nContent-Type: "application/octet-stream"\r\n\r\n`;
-        const post_string = `\r\n------${randomBoundryString}\r\nContent-Disposition: form-data; name="model"\r\n\r\nwhisper-1\r\n------${randomBoundryString}--\r\n`
-        const pre_string_encoded = new TextEncoder().encode(pre_string);
-        const post_string_encoded = new TextEncoder().encode(post_string);
-        const concatenated = await new Blob([pre_string_encoded, audioBuffer, post_string_encoded]).arrayBuffer()
-
-        const options: RequestUrlParam = {
-            url: 'https://api.openai.com/v1/audio/transcriptions',
-            method: 'POST',
-            contentType: `multipart/form-data; boundary=----${randomBoundryString}`,
-            headers: {
-                'Authorization': 'Bearer ' + this.settings.apiKey
-            },
-            body: concatenated
-        };
-        
-        const response = await requestUrl(options).catch((error) => { 
-            if (error.message.includes('401')) throw new Error('OpenAI API Key is not valid.');
-            else throw error; 
-        });
-        if ('text' in response.json) return response.json.text;
-        else throw new Error('Error. ' + JSON.stringify(response.json));
-    }
-
-    async htmlToMarkdown(html: string) {
-        const doc = new DOMParser().parseFromString(unescape(html), 'text/html');
-      
-        const body = doc.querySelector('main');
-
-        if (body == null) throw new Error('No search result.');
-
-        let markdown = body.innerHTML;
-        markdown = markdown.replace(/<h1>(.*?)<\/h1>/gi, '\n# $1\n');
-        markdown = markdown.replace(/<h2>(.*?)<\/h2>/gi, '\n## $1\n');
-        markdown = markdown.replace(/<h3>(.*?)<\/h3>/gi, '\n### $1\n');
-        markdown = markdown.replace(/<h4>(.*?)<\/h4>/gi, '\n#### $1\n');
-        markdown = markdown.replace(/<h5>(.*?)<\/h5>/gi, '\n##### $1\n');
-        markdown = markdown.replace(/<h6>(.*?)<\/h6>/gi, '\n###### $1\n');
-        markdown = markdown.replace(/<b>(.*?)<\/b>/gi, '**$1**');
-        markdown = markdown.replace(/<i>(.*?)<\/i>/gi, '_$1_');
-        markdown = markdown.replace(/<a href="(.*?)">(.*?)<\/a>/gi, '[$2]($1)');
-        markdown = markdown.replace(/<ul>(.*?)<\/ul>/gis, (match, p1) => {
-          const listItems = p1.split('</li>');
-          listItems.pop(); 
-          const markdownListItems = listItems.map((item: string) => {
-            const listItem = item.replace('<li>', '- ');
-            return listItem.trim();
-          });
-          return markdownListItems.join('\n') + '\n';
-        });
-        markdown = markdown.replace(/<p>(.*?)<\/p>/gis, '$1\n');
-        markdown = markdown.replace(/<br>/gi, '\n');
-        markdown = markdown.replace(/<hr>/gi, '---');
-        markdown = markdown.replace(/<\/?code>/gi, '`');
-        markdown = markdown.replace(/<.*?>/g, '').trim();
-        
-        let tokenLimit = 2048;
-        if (this.settings.model in TOKEN_LIMITS) tokenLimit = TOKEN_LIMITS[this.settings.model];
-
-        if (markdown.length > tokenLimit * 2) {
-            markdown = markdown.substring(0, tokenLimit * 2);
-        }
-
-        return markdown;
       }
-      
+    }
+    editor.replaceRange('\n', cursorPos);
+  }
 
-    async searchTextWithoutKey(query: string) {
-        const params = {
-            url: 'https://www.bing.com/search?q=' + encodeURIComponent(query),
-            method: 'GET'
-        };
+  getNextNewLine(editor: Editor, line: number) {
+    const isLastLine = line === editor.lastLine();
+    const nextLineContent = editor.getLine(line + 1);
+    if (isLastLine || (nextLineContent !== undefined && nextLineContent.trim().length > 0)) {
+      editor.replaceRange('\n', { line, ch: editor.getLine(line).length });
+    }
+    return line + 1;
+  }
 
-        const response = await requestUrl(params);
-        return this.htmlToMarkdown(response.text).then((markdown) => {
-            console.log(markdown)
-            return markdown;
-        });
+  writeText(editor: Editor, LnToWrite: number, text: string) {
+    const newLine = this.getNextNewLine(editor, LnToWrite);
+    editor.setLine(newLine, text);
+    return newLine;
+  }
+
+  async getImageBase64(url: string) {
+    const buffer = await requestUrl(url).arrayBuffer;
+    return arrayBufferToBase64(buffer);
+  }
+
+  generateRandomString(length: number): string {
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  async generateImage(prompt: string) {
+    if (prompt.length < 1) throw new Error('Cannot find prompt.');
+    if (this.settings.apiKey.length <= 1) throw new Error('OpenAI API Key is not provided.');
+
+    const configuration = new Configuration({
+      apiKey: this.settings.apiKey,
+    });
+    const openai = new OpenAIApi(configuration);
+
+    let newPrompt = prompt;
+
+    if (this.settings.usePromptPerfect) {
+      newPrompt = await this.improvePrompt(prompt, 'dalle');
     }
 
-    async searchTextWithKey(query: string) {
-        const params = {
-            url: 'https://api.bing.microsoft.com/v7.0/search?q=' + encodeURIComponent(query),
-            method: 'GET',
-            contentType: 'application/json',
-            headers: {
-                'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey
-            }
-        };
-
-        const response = await requestUrl(params).catch((error) => { 
-            if (error.message.includes('401')) throw new Error('Bing Web Search API Key is not valid.');
-            else throw error; 
-        });
-
-        if ('webPages' in response.json && 'value' in response.json.webPages) return response.json.webPages.value;
-        else throw new Error('No web search results: ' + JSON.stringify(response.json));
-    }
-
-    async searchText(query: string) {
-        if (this.settings.bingSearchKey.length > 1) {
-            return this.searchTextWithKey(query);
+    const response = await openai
+      .createImage({
+        prompt: newPrompt,
+        n: 1,
+        size: this.settings.imgSize as CreateImageRequestSizeEnum,
+        response_format: 'b64_json',
+      })
+      .catch((error) => {
+        if (error.response) {
+          throw new Error(`Error. ${error.response.data.error.message}`);
+        } else if (error.request) {
+          throw new Error(`No response received!`);
         } else {
-            return this.searchTextWithoutKey(query);
+          throw new Error(`Error! ${error.message}`);
         }
+      });
+
+    const activeFile = this.app.workspace.getActiveFile();
+
+    const size = this.settings.imgSize.split('x')[0];
+    const filename = activeFile?.basename + '_' + this.generateRandomString(8) + '.png';
+    const filepath = await this.app.vault.getAvailablePathForAttachments(filename);
+    console.log(filename);
+    console.log(filepath);
+    const base64 = response.data.data[0].b64_json as string;
+    const buffer = Buffer.from(base64, 'base64');
+
+    const fileDir = filepath.split('/');
+    if (fileDir.length > 1) {
+      fileDir.pop();
+      const dirPath = fileDir.join('/');
+      const exists = this.app.vault.getAbstractFileByPath(dirPath) instanceof TFolder;
+      if (!exists) await this.app.vault.createFolder(dirPath);
     }
 
-    async getAttachmentDir() {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) throw new Error('No active file');
-        const dir = this.app.vault.getAvailablePathForAttachments(activeFile.basename, activeFile?.extension, activeFile);  // getAvailablePathForAttachments is undocumented
-        return dir;
+    await this.app.vault.createBinary(filepath, buffer);
+
+    if (this.settings.saveImg == 'attachment') {
+      return `![${size}](${encodeURI(filepath)})\n`;
+    } else {
+      return `![${size}](data:image/png;base64,${response.data.data[0].b64_json})\n`;
     }
+  }
 
-    getCurrentPath() {
-        const activeFile = this.app.workspace.getActiveFile();
-        if (!activeFile) throw new Error('No active file');
-        const currentPath = activeFile.path.split('/');
-        currentPath.pop();
-        const currentPathString = currentPath.join('/');
-        return currentPathString;
+  async generateTranscript(audioBuffer: ArrayBuffer, filetype: string) {
+    if (!this.settings.apiKey || this.settings.apiKey.trim().length === 0) {
+      throw new Error('OpenAI API Key is not provided.');
     }
+  
+    const mimeTypes: { [key: string]: string } = {
+      flac: 'audio/flac',
+      m4a: 'audio/x-m4a',
+      mp3: 'audio/mpeg',
+      mp4: 'audio/mp4',
+      mpeg: 'audio/mpeg',
+      mpga: 'audio/mpeg',
+      oga: 'audio/ogg',
+      ogg: 'audio/ogg',
+      wav: 'audio/wav',
+      webm: 'audio/webm',
+      mov: 'audio/quicktime',
+    };
+  
+    const mimeType = mimeTypes[filetype.toLowerCase()] || 'application/octet-stream';
+  
+    const blob = new Blob([audioBuffer], { type: mimeType });
 
-    async findFilePath(text: string, regex: RegExp[]) {
-        const fullPath = await this.getAttachmentDir().then((attachmentPath) => {
-            let filename = '';
-            let result: RegExpExecArray | null;
-            for (const reg of regex) {
-                while ((result = reg.exec(text)) !== null) {
-                    filename = normalizePath(decodeURI(result[0])).trim();
-                }
-            }
+    const formData = new FormData();
+    formData.append('file', blob, `audio.${filetype}`);
+    formData.append('model', 'whisper-1');
 
-            if (filename == '') throw new Error('No file found in the text.');
-
-            const fileInSpecificFolder = filename.contains('/');
-            const AttInRootFolder = attachmentPath === '' || attachmentPath === '/';
-            const AttInCurrentFolder = attachmentPath.startsWith('./');
-            const AttInSpecificFolder = !AttInRootFolder && !AttInCurrentFolder;
-
-            let fullPath = '';
-
-            if (AttInRootFolder || fileInSpecificFolder) fullPath = filename;
-            else {
-                if (AttInSpecificFolder) fullPath = attachmentPath + '/' + filename;
-                if (AttInCurrentFolder) {
-                    const attFolder = attachmentPath.substring(2);
-                    if (attFolder.length == 0) fullPath = this.getCurrentPath() + '/' + filename;
-                    else fullPath = this.getCurrentPath() + '/' + attFolder + '/' + filename;
-                }
-            }
-
-            const exists = this.app.vault.getAbstractFileByPath(fullPath) instanceof TAbstractFile;
-            if (exists) return fullPath;
-            else {
-                let path = '';
-                let found = false;
-                this.app.vault.getFiles().forEach((file) => {
-                    if (file.name === filename) {
-                        path = file.path;
-                        found = true;
-                    }
-                });
-                if (found) return path;
-                else throw new Error('File not found');
-            }
-        });
-        return fullPath as string;
+    const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + this.settings.apiKey,
+      },
+      body: formData,
+    }).catch((error) => {
+      console.error('Network error:', error);
+      if (error.message.includes('401')) {
+        throw new Error('OpenAI API Key is not valid.');
+      } else {
+        throw error;
+      }
+    });
+  
+    if (!response.ok) {
+      const errorJson = await response.json();
+      const errorMessage = errorJson?.error?.message || response.statusText;
+      throw new Error(`${errorMessage}`);
     }
+  
+    const result = await response.json();
+    if (result && 'text' in result) {
+      return result.text;
+    } else {
+      throw new Error('Error: ' + JSON.stringify(result));
+    }
+  }
 
-    async generateTextWithPdf(prompt: string, editor: Editor, currentLn: number, filepath: string) {
-        const pdfBuffer = await this.app.vault.adapter.readBinary(filepath);
-        const pdfjs = await loadPdfJs();
-        const pdf = await pdfjs.getDocument(pdfBuffer).promise;
+  async searchTextWithoutKey(query: string) {
+    const params = {
+      url: 'https://www.bing.com/search?q=' + encodeURIComponent(query),
+      method: 'GET',
+    };
+    const response = await requestUrl(params);
+    return response.text;
+  }
 
-        const context = `As an assistant who can learn from text given to you, ` +
-        `your task is to incorporate information from text given to you into your ` +
-        `answers when responding to questions. Your response should include the ` +
-        `relevant information from the text given to you and provide attribution ` + 
-        `by mentioning the page number. Below is the content, ` +
-        `which is extracted from a PDF file:\n\n`;
+  async searchTextWithKey(query: string) {
+    const params = {
+      url: 'https://api.bing.microsoft.com/v7.0/search?q=' + encodeURIComponent(query),
+      method: 'GET',
+      contentType: 'application/json',
+      headers: {
+        'Ocp-Apim-Subscription-Key': this.settings.bingSearchKey,
+      },
+    };
 
-        let message = context;
-        
-        for (let i = 0; i < pdf.numPages; i++) {
-            const page = await pdf.getPage(i + 1);
-            const content = await page.getTextContent();
-            const pageContent = content.items
-                .map((item: any) => item.str)
-                .filter((str: string) => str !== '')
-                .join(' ')
-                .replace(/\s+/g, ' ');
-            message += `Page ${i + 1}: ` + pageContent + '\n';
+    const response = await requestUrl(params).catch((error) => {
+      if (error.message.includes('401')) throw new Error('Bing Web Search API Key is not valid.');
+      else throw error;
+    });
+
+    if ('webPages' in response.json && 'value' in response.json.webPages)
+      return response.json.webPages.value;
+    else throw new Error('No web search results: ' + JSON.stringify(response.json));
+  }
+
+  async searchText(query: string) {
+    if (this.settings.bingSearchKey.length > 1) {
+      return this.searchTextWithKey(query);
+    } else {
+      return this.searchTextWithoutKey(query);
+    }
+  }
+
+  getCurrentPath() {
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile) throw new Error('No active file');
+    const currentPath = activeFile.path.split('/');
+    currentPath.pop();
+    const currentPathString = currentPath.join('/');
+    return currentPathString;
+  }
+
+  async findFilePath(editor: Editor, regexList: RegExp[]): Promise<string> {
+    const cursorPosition = editor.getCursor();
+    const text = editor.getValue();
+
+    let closestMatch: { index: number; length: number; linkText: string } | null = null;
+
+    for (const regex of regexList) {
+      regex.lastIndex = 0; // Reset regex index
+      let match: RegExpExecArray | null;
+
+      while ((match = regex.exec(text)) !== null) {
+        const matchStart = match.index;
+        const matchEnd = regex.lastIndex;
+        const matchLength = matchEnd - matchStart;
+
+        // Check if this match is closer to the cursor
+        if (
+          !closestMatch ||
+          Math.abs(matchStart - editor.posToOffset(cursorPosition)) <
+            Math.abs(closestMatch.index - editor.posToOffset(cursorPosition))
+        ) {
+          closestMatch = {
+            index: matchStart,
+            length: matchLength,
+            linkText: match[1] || match[0],
+          };
         }
-
-        return this.generateText(prompt, editor, currentLn, message)
+      }
     }
 
-    commandGenerateText(editor: Editor, prompt: string) {
-        const currentLn = editor.getCursor('to').line;
-        if (this.writing) {
-            new Notice('Generator is already in progress.');
-            return;
-        }
-        this.writing = true;
-        new Notice("Generating text...");
-        this.generateText(prompt, editor, currentLn).then((text) => {
-            new Notice("Text completed.");
-            this.writing = false;
-        }).catch(error => {
-            console.log(error.message);
-            new Notice(error.message);
-            this.writing = false;
-        });
+    if (!closestMatch) {
+      throw new Error('No file link found near the cursor.');
     }
 
-    commandGenerateTextWithPdf(editor: Editor, prompt: string) {
-        const currentLn = editor.getCursor('to').line;
-        const position = editor.getCursor();
-        const text = editor.getRange({ line: 0, ch: 0 }, position);
-        const regex = [/(?<=\[(.*)]\()(([^[\]])+)\.pdf(?=\))/g,
-            /(?<=\[\[)(([^[\]])+)\.pdf(?=]])/g];
-        this.findFilePath(text, regex).then((path) => {
-            if (this.writing) throw new Error('Generator is already in progress.');
-            this.writing = true;
-            new Notice(`Generating text in context of ${path}...`);
-            this.generateTextWithPdf(prompt, editor, currentLn, path).then((text) => {
-                new Notice("Text completed.");
-                this.writing = false;
-            }).catch(error => {
-                console.log(error.message);
-                new Notice(error.message);
-                this.writing = false;
-            });
-        }).catch(error => {
-            console.log(error.message);
-            new Notice(error.message);
-        });
+    const linkText = closestMatch.linkText;
+
+    const activeFile = this.app.workspace.getActiveFile();
+    if (!activeFile) throw new Error('No active file');
+
+    const linkedFile = this.app.metadataCache.getFirstLinkpathDest(linkText, activeFile.path);
+    if (!linkedFile) {
+      throw new Error(`File "${linkText}" not found in vault.`);
     }
 
-    commandGenerateImage(editor: Editor, prompt: string) {
-        const currentLn = editor.getCursor('to').line;
-        if (this.writing) {
-            new Notice('Generator is already in progress.');
-            return;
-        }
-        this.writing = true;
-        new Notice("Generating image...");
-        this.generateImage(prompt).then((text) => {
-            this.writeText(editor, currentLn, text);
-            new Notice('Image Generated.');
-            this.writing = false;
-        }).catch(error => {
-            console.log(error.message);
-            new Notice(error.message);
-            this.writing = false;
-        });
+    // Return the file path
+    return linkedFile.path;
+  }
+
+  async generateTextWithPdf(prompt: string, editor: Editor, currentLn: number, filepath: string) {
+    const pdfBuffer = await this.app.vault.adapter.readBinary(filepath);
+    const pdfjs = await loadPdfJs();
+    const pdf = await pdfjs.getDocument(pdfBuffer).promise;
+
+    const context =
+      `As an assistant who can learn from text given to you, ` +
+      `your task is to incorporate information from text given to you into your ` +
+      `answers when responding to questions. Your response should include the ` +
+      `relevant information from the text given to you and provide attribution ` +
+      `by mentioning the page number. Below is the content, ` +
+      `which is extracted from a PDF file:\n\n`;
+
+    let message = context;
+
+    for (let i = 0; i < pdf.numPages; i++) {
+      const page = await pdf.getPage(i + 1);
+      const content = await page.getTextContent();
+      const pageContent = content.items
+        .map((item: any) => item.str)
+        .filter((str: string) => str !== '')
+        .join(' ')
+        .replace(/\s+/g, ' ');
+      message += `Page ${i + 1}: ` + pageContent + '\n';
     }
 
-    commandGenerateTranscript(editor: Editor) {
-        const position = editor.getCursor();
-        const text = editor.getRange({ line: 0, ch: 0 }, position);
-        const regex = [/(?<=\[\[)(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=]])/g,
-            /(?<=\[(.*)]\()(([^[\]])+)\.(mp3|mp4|mpeg|mpga|m4a|wav|webm)(?=\))/g];
-        this.findFilePath(text, regex).then((path) => {
-            const fileType = path.split('.').pop();
-            if (fileType == undefined || fileType == null || fileType == '') {
-                new Notice('No audio file found');
-            } else {
-                this.app.vault.adapter.exists(path).then((exists) => {
-                    if (!exists) throw new Error(path + ' does not exist');
-                    this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
-                        if (this.writing) {
-                            new Notice('Generator is already in progress.');
-                            return;
-                        }
-                        this.writing = true;
-                        new Notice("Generating transcript...");
-                        this.generateTranscript(audioBuffer, fileType).then((result) => {
-                            this.writeText(editor, position.line, result);
-                            new Notice('Transcript Generated.');
-                            this.writing = false;
-                        }).catch(error => {
-                            console.log(error.message);
-                            new Notice(error.message);
-                            this.writing = false;
-                        });
-                    });
-                });
-            }
-        }).catch(error => {
-            console.log(error.message);
-            new Notice(error.message);
-        });
-    }
+    return this.generateText(prompt, editor, currentLn, message);
+  }
 
-    async onload() {
-        await this.loadSettings();
+  commandGenerateText(editor: Editor, prompt: string) {
+    const currentLn = editor.getCursor('to').line;
+    if (this.writing) {
+      new Notice('Generator is already in progress.');
+      return;
+    }
+    this.writing = true;
+    new Notice('Generating text...');
+    this.generateText(prompt, editor, currentLn)
+      .then((text) => {
+        new Notice('Text completed.');
         this.writing = false;
+      })
+      .catch((error) => {
+        console.log(error.message);
+        new Notice(error.message);
+        this.writing = false;
+      });
+  }
 
-        this.addCommand({
-            id: 'text-prompt',
-            name: 'Generate text from prompt',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const onSubmit = (prompt: string) => {
-                    this.commandGenerateText(editor, prompt);
-                };
-                new PromptModal(this.app, "", onSubmit).open();
-            }
-        });
+  commandGenerateTextWithPdf(editor: Editor, prompt: string) {
+    const currentLn = editor.getCursor('to').line;
+    const regexList = [
+      /!\[\[(.+?\.pdf)\]\]/g, // Matches ![[File.pdf]]
+      /!\[.*?\]\((.+?\.pdf)\)/g, // Matches ![Alt Text](File.pdf)
+    ];
+    this.findFilePath(editor, regexList)
+      .then((path) => {
+        if (this.writing) throw new Error('Generator is already in progress.');
+        this.writing = true;
+        new Notice(`Generating text in context of ${path}...`);
+        this.generateTextWithPdf(prompt, editor, currentLn, path)
+          .then((text) => {
+            new Notice('Text completed.');
+            this.writing = false;
+          })
+          .catch((error) => {
+            console.log(error.message);
+            new Notice(error.message);
+            this.writing = false;
+          });
+      })
+      .catch((error) => {
+        console.log(error.message);
+        new Notice(error.message);
+      });
+  }
 
-        this.addCommand({
-            id: 'img-prompt',
-            name: 'Generate an image from prompt',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const onSubmit = (prompt: string) => {
-                    this.commandGenerateImage(editor, prompt);
-                };
-                new PromptModal(this.app, "", onSubmit).open();
-            }
-        });
+  commandGenerateImage(editor: Editor, prompt: string) {
+    const currentLn = editor.getCursor('to').line;
+    if (this.writing) {
+      new Notice('Generator is already in progress.');
+      return;
+    }
+    this.writing = true;
+    new Notice('Generating image...');
+    this.generateImage(prompt)
+      .then((text) => {
+        this.writeText(editor, currentLn, text);
+        new Notice('Image Generated.');
+        this.writing = false;
+      })
+      .catch((error) => {
+        console.log(error.message);
+        new Notice(error.message);
+        this.writing = false;
+      });
+  }
 
-        this.addCommand({
-            id: 'text-line',
-            name: 'Generate text from the current line',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const position = editor.getCursor();
-                const lineContent = editor.getLine(position.line);
-                this.commandGenerateText(editor, lineContent);
-            }
-        });
-
-        this.addCommand({
-            id: 'img-line',
-            name: 'Generate an image from the current line',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const position = editor.getCursor();
-                const lineContent = editor.getLine(position.line);
-                this.commandGenerateImage(editor, lineContent);
-            }
-        });
-
-        this.addCommand({
-            id: 'text-selected',
-            name: 'Generate text from the selected text',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const selectedText = editor.getSelection();
-                this.commandGenerateText(editor, selectedText);
-            }
-        });
-
-        this.addCommand({
-            id: 'img-selected',
-            name: 'Generate an image from the selected text',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const selectedText = editor.getSelection();
-                new Notice("Generating image...");
-                this.commandGenerateImage(editor, selectedText);
-            }
-        });
-
-        this.addCommand({
-            id: 'audio-transcript',
-            name: 'Generate a transcript from the above audio',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                this.commandGenerateTranscript(editor);
-            }
-        });
-
-        this.addCommand({
-            id: 'pdf-prompt',
-            name: 'Generate text from prompt in context of the above PDF',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const onSubmit = (prompt: string) => {
-                    this.commandGenerateTextWithPdf(editor, prompt);
-                };
-                new PromptModal(this.app, "", onSubmit).open();
-            }
-        });
-
-        this.addCommand({
-            id: 'pdf-line',
-            name: 'Generate text from the current line in context of the above PDF',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const position = editor.getCursor();
-                const lineCotent = editor.getLine(position.line)
-                this.commandGenerateTextWithPdf(editor, lineCotent);
-            }
-        });
-
-        this.addCommand({
-            id: 'pdf-selected',
-            name: 'Generate text from the selected text in context of the above PDF',
-            editorCallback: (editor: Editor, view: MarkdownView) => {
-                const selectedText = editor.getSelection();
-                this.commandGenerateTextWithPdf(editor, selectedText);
-            }
-        });
-
-        const extraCommandsForSelected = this.settings.promptsForSelected.split('\n');
-        for (let command of extraCommandsForSelected) {
-            command = command.trim();
-            if (command == null || command == undefined || command.length < 1) continue;
-            const cid = command.toLowerCase().replace(/ /g, '-');
-            this.addCommand({
-                id: cid,
-                name: command,
-                editorCallback: (editor: Editor, view: MarkdownView) => {
-                    const selectedText = editor.getSelection();
-                    const prompt = 'You are an assistant who can learn from the text I give to you. Here is the text selected:\n\n' + selectedText + '\n\n' + command;
-                    this.commandGenerateText(editor, prompt);
-                }
+  commandGenerateTranscript(editor: Editor) {
+    const position = editor.getCursor();
+    const regexList = [
+      /!\[\[(.+?\.(flac|m4a|mp3|mp4|mpeg|mpga|oga|ogg|wav|webm))\]\]/g, // Matches ![[File.mp3]]
+      /!\[.*?\]\((.+?\.(flac|m4a|mp3|mp4|mpeg|mpga|oga|ogg|wav|webm))\)/g, // Matches ![Alt Text](File.mp3)
+    ];
+    this.findFilePath(editor, regexList)
+      .then((path) => {
+        const fileType = path.split('.').pop();
+        if (fileType == undefined || fileType == null || fileType == '') {
+          new Notice('No audio file found');
+        } else {
+          this.app.vault.adapter.exists(path).then((exists) => {
+            if (!exists) throw new Error(path + ' does not exist');
+            this.app.vault.adapter.readBinary(path).then((audioBuffer) => {
+              if (this.writing) {
+                new Notice('Already in progress.');
+                return;
+              }
+              this.writing = true;
+              new Notice('Generating transcript...');
+              this.generateTranscript(audioBuffer, fileType)
+                .then((result) => {
+                  this.writeText(editor, position.line, result);
+                  new Notice('Transcript Generated.');
+                  this.writing = false;
+                })
+                .catch((error) => {
+                  console.log(error.message);
+                  new Notice(error.message);
+                  this.writing = false;
+                });
             });
+          });
         }
+      })
+      .catch((error) => {
+        console.log(error.message);
+        new Notice(error.message);
+      });
+  }
 
-        const extraCommandsForPdf = this.settings.promptsForPdf.split('\n');
-        for (let command of extraCommandsForPdf) {
-            command = command.trim();
-            if (command == null || command == undefined || command.length < 1) continue;
-            const cid = command.toLowerCase().replace(/ /g, '-');
-            this.addCommand({
-                id: cid,
-                name: command,
-                editorCallback: (editor: Editor, view: MarkdownView) => {
-                    this.commandGenerateTextWithPdf(editor, command);
-                }
-            });
-        }
+  addStyles() {
+    const style = document.createElement('style');
+    style.textContent = `
+    .prompt-modal-textarea-container {
+      margin-top: 10px;
+      margin-bottom: 20px;
+    }
+    .prompt-modal-textarea {
+      width: 100%;
+      height: 100px;
+      resize: vertical;
+    }
+    .prompt-modal-button-container {
+      display: flex;
+      justify-content: flex-end;
+    }
+    .prompt-modal-button-container button {
+      margin-left: 10px;
+    }
+  `;
+    document.head.appendChild(style);
+  }
 
+  async onload() {
+    await this.loadSettings();
+    this.writing = false;
+    this.addStyles();
 
-        // This adds a settings tab so the user can configure various aspects of the plugin
-        this.addSettingTab(new ApiSettingTab(this.app, this));
+    this.addCommand({
+      id: 'text-prompt',
+      name: 'Generate text from prompt',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const onSubmit = (prompt: string) => {
+          this.commandGenerateText(editor, prompt);
+        };
+        new PromptModal(this.app, '', onSubmit).open();
+      },
+    });
 
-        // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-        this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+    this.addCommand({
+      id: 'img-prompt',
+      name: 'Generate an image from prompt',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const onSubmit = (prompt: string) => {
+          this.commandGenerateImage(editor, prompt);
+        };
+        new PromptModal(this.app, '', onSubmit).open();
+      },
+    });
+
+    this.addCommand({
+      id: 'text-line',
+      name: 'Generate text from the current line',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const position = editor.getCursor();
+        const lineContent = editor.getLine(position.line);
+        this.commandGenerateText(editor, lineContent);
+      },
+    });
+
+    this.addCommand({
+      id: 'img-line',
+      name: 'Generate an image from the current line',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const position = editor.getCursor();
+        const lineContent = editor.getLine(position.line);
+        this.commandGenerateImage(editor, lineContent);
+      },
+    });
+
+    this.addCommand({
+      id: 'text-selected',
+      name: 'Generate text from the selected text',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const selectedText = editor.getSelection();
+        this.commandGenerateText(editor, selectedText);
+      },
+    });
+
+    this.addCommand({
+      id: 'img-selected',
+      name: 'Generate an image from the selected text',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const selectedText = editor.getSelection();
+        new Notice('Generating image...');
+        this.commandGenerateImage(editor, selectedText);
+      },
+    });
+
+    this.addCommand({
+      id: 'audio-transcript',
+      name: 'Generate a transcript from the above audio',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        this.commandGenerateTranscript(editor);
+      },
+    });
+
+    this.addCommand({
+      id: 'pdf-prompt',
+      name: 'Generate text from prompt in context of the above PDF',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const onSubmit = (prompt: string) => {
+          this.commandGenerateTextWithPdf(editor, prompt);
+        };
+        new PromptModal(this.app, '', onSubmit).open();
+      },
+    });
+
+    this.addCommand({
+      id: 'pdf-line',
+      name: 'Generate text from the current line in context of the above PDF',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const position = editor.getCursor();
+        const lineCotent = editor.getLine(position.line);
+        this.commandGenerateTextWithPdf(editor, lineCotent);
+      },
+    });
+
+    this.addCommand({
+      id: 'pdf-selected',
+      name: 'Generate text from the selected text in context of the above PDF',
+      editorCallback: (editor: Editor, view: MarkdownView) => {
+        const selectedText = editor.getSelection();
+        this.commandGenerateTextWithPdf(editor, selectedText);
+      },
+    });
+
+    const extraCommandsForSelected = this.settings.promptsForSelected.split('\n');
+    for (let command of extraCommandsForSelected) {
+      command = command.trim();
+      if (command == null || command == undefined || command.length < 1) continue;
+      const cid = command.toLowerCase().replace(/ /g, '-');
+      this.addCommand({
+        id: cid,
+        name: command,
+        editorCallback: (editor: Editor, view: MarkdownView) => {
+          const selectedText = editor.getSelection();
+          const prompt =
+            'You are an assistant who can learn from the text I give to you. Here is the text selected:\n\n' +
+            selectedText +
+            '\n\n' +
+            command;
+          this.commandGenerateText(editor, prompt);
+        },
+      });
     }
 
-    onunload() {
-
+    const extraCommandsForPdf = this.settings.promptsForPdf.split('\n');
+    for (let command of extraCommandsForPdf) {
+      command = command.trim();
+      if (command == null || command == undefined || command.length < 1) continue;
+      const cid = command.toLowerCase().replace(/ /g, '-');
+      this.addCommand({
+        id: cid,
+        name: command,
+        editorCallback: (editor: Editor, view: MarkdownView) => {
+          this.commandGenerateTextWithPdf(editor, command);
+        },
+      });
     }
 
-    async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-    }
+    // This adds a settings tab so the user can configure various aspects of the plugin
+    this.addSettingTab(new ApiSettingTab(this.app, this));
 
-    async saveSettings() {
-        await this.saveData(this.settings);
-    }
+    // When registering intervals, this function will automatically clear the interval when the plugin is disabled.
+    this.registerInterval(window.setInterval(() => console.log('setInterval'), 5 * 60 * 1000));
+  }
+
+  onunload() {}
+
+  async loadSettings() {
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+  }
+
+  async saveSettings() {
+    await this.saveData(this.settings);
+  }
 }
 
 class ApiSettingTab extends PluginSettingTab {
-    plugin: AICommanderPlugin;
+  plugin: AICommanderPlugin;
 
-    constructor(app: App, plugin: AICommanderPlugin) {
-        super(app, plugin);
-        this.plugin = plugin;
-    }
+  constructor(app: App, plugin: AICommanderPlugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
 
-    display(): void {
-        const { containerEl } = this;
-        containerEl.empty();
-        containerEl.createEl('h2', { text: 'OpenAI API' });
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl('h2', { text: 'OpenAI API' });
 
-        new Setting(containerEl)
-            .setName('OpenAI API key')
-            .setDesc('For use of OpenAI models')
-            .addText(text => text
-                .setPlaceholder('Enter your key')
-                .setValue(this.plugin.settings.apiKey)
-                .onChange(async (value) => {
-                    this.plugin.settings.apiKey = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('OpenAI API key')
+      .setDesc('For use of OpenAI models')
+      .addText((text) =>
+        text
+          .setPlaceholder('Enter your key')
+          .setValue(this.plugin.settings.apiKey)
+          .onChange(async (value) => {
+            this.plugin.settings.apiKey = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Model')
-            .setDesc('Select the model to use for content generation')
-            .addText(text => text
-                .setPlaceholder('gpt-3.5-turbo')
-                .setValue(this.plugin.settings.model)
-                .onChange(async (value) => {
-                    this.plugin.settings.model = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Model')
+      .setDesc('Select the model to use for content generation')
+      .addText((text) =>
+        text
+          .setPlaceholder('gpt-3.5-turbo')
+          .setValue(this.plugin.settings.model)
+          .onChange(async (value) => {
+            this.plugin.settings.model = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Image Size')
-            .setDesc('Size of the image to generate')
-            .addDropdown(dropdown => dropdown
-                .addOption('256x256', '256x256')
-                .addOption('512x512', '512x512')
-                .addOption('1024x1024', '1024x1024')
-                .setValue(this.plugin.settings.imgSize)
-                .onChange(async (value) => {
-                    this.plugin.settings.imgSize = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Image Size')
+      .setDesc('Size of the image to generate')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('256x256', '256x256')
+          .addOption('512x512', '512x512')
+          .addOption('1024x1024', '1024x1024')
+          .setValue(this.plugin.settings.imgSize)
+          .onChange(async (value) => {
+            this.plugin.settings.imgSize = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Image Format')
-            .setDesc('Select how you want to save the image')
-            .addDropdown(dropdown => dropdown
-                .addOption('base64', 'base64')
-                .addOption('attachment', 'attachment')
-                .setValue(this.plugin.settings.saveImg)
-                .onChange(async (value) => {
-                    this.plugin.settings.saveImg = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Image Format')
+      .setDesc('Select how you want to save the image')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('base64', 'base64')
+          .addOption('attachment', 'attachment')
+          .setValue(this.plugin.settings.saveImg)
+          .onChange(async (value) => {
+            this.plugin.settings.saveImg = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        containerEl.createEl('h2', { text: 'Search Engine' });
-        containerEl.createEl('p', { text: 'You may use Bing without an API key. Use an API key to achieve the best performance.' });
+    containerEl.createEl('h2', { text: 'Search Engine' });
+    containerEl.createEl('p', {
+      text: 'You may use Bing without an API key. Use an API key to achieve the best performance.',
+    });
 
-        new Setting(containerEl)
-            .setName('Use search engine')
-            .setDesc("Use text generator with search engine")
-            .addToggle(value => value
-                .setValue(this.plugin.settings.useSearchEngine)
-                .onChange(async (value) => {
-                    this.plugin.settings.useSearchEngine = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Use search engine')
+      .setDesc('Use text generator with search engine')
+      .addToggle((value) =>
+        value.setValue(this.plugin.settings.useSearchEngine).onChange(async (value) => {
+          this.plugin.settings.useSearchEngine = value;
+          await this.plugin.saveSettings();
+        })
+      );
 
-        new Setting(containerEl)
-            .setName('Search engine')
-            .setDesc("Select the search engine to use with text generator")
-            .addDropdown(dropdown => dropdown
-                .addOption('bing', 'bing')
-                .setValue(this.plugin.settings.searchEngine)
-                .onChange(async (value) => {
-                    this.plugin.settings.searchEngine = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Search engine')
+      .setDesc('Select the search engine to use with text generator')
+      .addDropdown((dropdown) =>
+        dropdown
+          .addOption('bing', 'bing')
+          .setValue(this.plugin.settings.searchEngine)
+          .onChange(async (value) => {
+            this.plugin.settings.searchEngine = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Bing Web Search API key')
-            .setDesc("Find in 'manage keys' in Azure portal")
-            .addText(text => text
-                .setPlaceholder('Enter your key')
-                .setValue(this.plugin.settings.bingSearchKey)
-                .onChange(async (value) => {
-                    this.plugin.settings.bingSearchKey = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Bing Web Search API key')
+      .setDesc("Find in 'manage keys' in Azure portal")
+      .addText((text) =>
+        text
+          .setPlaceholder('Enter your key')
+          .setValue(this.plugin.settings.bingSearchKey)
+          .onChange(async (value) => {
+            this.plugin.settings.bingSearchKey = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        containerEl.createEl('h2', { text: 'Prompt Perfect' });
+    containerEl.createEl('h2', { text: 'Prompt Perfect' });
 
-        new Setting(containerEl)
-            .setName('Use Prompt Perfect')
-            .setDesc("Use Prompt Perfect to improve prompts for text and image generation")
-            .addToggle(value => value
-                .setValue(this.plugin.settings.usePromptPerfect)
-                .onChange(async (value) => {
-                    this.plugin.settings.usePromptPerfect = value;
-                    await this.plugin.saveSettings();
-                }));
+    new Setting(containerEl)
+      .setName('Use Prompt Perfect')
+      .setDesc('Use Prompt Perfect to improve prompts for text and image generation')
+      .addToggle((value) =>
+        value.setValue(this.plugin.settings.usePromptPerfect).onChange(async (value) => {
+          this.plugin.settings.usePromptPerfect = value;
+          await this.plugin.saveSettings();
+        })
+      );
 
+    new Setting(containerEl)
+      .setName('Prompt Perfect API key')
+      .setDesc('Find in Prompt Perfect settings')
+      .addText((text) =>
+        text
+          .setPlaceholder('Enter your key')
+          .setValue(this.plugin.settings.promptPerfectKey)
+          .onChange(async (value) => {
+            this.plugin.settings.promptPerfectKey = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Prompt Perfect API key')
-            .setDesc("Find in Prompt Perfect settings")
-            .addText(text => text
-                .setPlaceholder('Enter your key')
-                .setValue(this.plugin.settings.promptPerfectKey)
-                .onChange(async (value) => {
-                    this.plugin.settings.promptPerfectKey = value;
-                    await this.plugin.saveSettings();
-                }));
+    containerEl.createEl('h2', { text: 'Custom Commands' });
+    containerEl.createEl('p', { text: 'Reload the plugin after changing below settings' });
 
-        containerEl.createEl('h2', { text: 'Custom Commands' });
-        containerEl.createEl('p', { text: 'Reload the plugin after changing below settings' });
+    new Setting(containerEl)
+      .setName('Custom command for selected text')
+      .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('Summarise the text\nTranslate into English')
+          .setValue(this.plugin.settings.promptsForSelected)
+          .onChange(async (value) => {
+            this.plugin.settings.promptsForSelected = value;
+            await this.plugin.saveSettings();
+          })
+      );
 
-        new Setting(containerEl)
-            .setName('Custom command for selected text')
-            .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
-            .addTextArea(text => text
-                .setPlaceholder('Summarise the text\nTranslate into English')
-                .setValue(this.plugin.settings.promptsForSelected)
-                .onChange(async (value) => {
-                    this.plugin.settings.promptsForSelected = value;
-                    await this.plugin.saveSettings();
-                }));
-
-        new Setting(containerEl)
-            .setName('Custom command for PDF')
-            .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
-            .addTextArea(text => text
-                .setPlaceholder('Summarise the PDF')
-                .setValue(this.plugin.settings.promptsForPdf)
-                .onChange(async (value) => {
-                    this.plugin.settings.promptsForPdf = value;
-                    await this.plugin.saveSettings();
-                }));
-    }
+    new Setting(containerEl)
+      .setName('Custom command for PDF')
+      .setDesc('Fill in text generator prompts line by line. They will appear as commands.')
+      .addTextArea((text) =>
+        text
+          .setPlaceholder('Summarise the PDF')
+          .setValue(this.plugin.settings.promptsForPdf)
+          .onChange(async (value) => {
+            this.plugin.settings.promptsForPdf = value;
+            await this.plugin.saveSettings();
+          })
+      );
+  }
 }
